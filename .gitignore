@@ -46,3 +46,12 @@ desktop.ini
 *.orig
 preview*.svg
 _scenes.json
+
+# 调试截图 / 临时页面：下划线开头的一律不进仓库。
+# （曾经因为 git add -A 把一张真实看板截图带进过提交，这里兜住）
+_*.png
+_*.jpg
+_*.jpeg
+_*.html
+_*.log
+_flashlog.txt
