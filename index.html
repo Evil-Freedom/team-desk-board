@@ -1,0 +1,1356 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>示例部门 · 状态树</title>
+<style>
+  :root{
+    --bg:#f5f7fa;
+    --card:#ffffff;
+    --line:#eef1f6;
+    --ink:#111827;
+    --ink-2:#667085;
+    --ink-3:#98a2b3;
+    --idle:#059669;      --idle-bg:#ecfdf5;
+    --normal:#2563eb;    --normal-bg:#eff6ff;
+    --busy:#d97706;      --busy-bg:#fffbeb;
+    --overload:#dc2626;  --overload-bg:#fef2f2;
+    --away:#475569;      --away-bg:#f1f5f9;
+    --leave:#0891b2;     --leave-bg:#ecfeff;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .board{max-width:1280px;margin:0 auto;padding:26px 22px 50px}
+
+  /* ---------- 顶部 ---------- */
+  .head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:14px;margin-bottom:6px}
+  .head h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.2px}
+  /* ---------- 顶部：标题与统计 ---------- */
+  .topbar{
+    display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;
+    gap:12px;margin:0 0 4px;
+  }
+  .head-side{min-width:220px}
+
+  /* 负责人这一层：单独一张卡，居中挂在部门下面 */
+  .lead-row{display:flex;justify-content:center;margin-top:64px}
+  .lead-row .member{width:195px;max-width:none;flex:none;animation:none}
+
+  .title{font-size:17px;font-weight:650;letter-spacing:-.2px;margin:0 0 6px}
+  .crumb{margin:0 0 4px;font-size:12px;color:var(--ink-3);display:flex;flex-wrap:wrap;align-items:center;gap:5px}
+  .crumb i{font-style:normal;color:#c8d0dc}
+  .crumb .cur{color:var(--ink-2);font-weight:600}
+  .upd{font-size:11px;color:#b3bbc7;margin:0}
+
+  .stats{display:flex;flex-wrap:wrap;gap:7px}
+  .stat{
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    padding:6px 11px;font-size:12px;color:var(--ink-2);
+    display:flex;align-items:baseline;gap:5px;
+  }
+  .stat b{font-size:15px;font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums}
+  .stat.warn b{color:var(--overload)}
+  .stat.away b{color:var(--away)}
+
+  /* ---------- 树 ---------- */
+  .tree{position:relative;padding:10px 0 8px}
+  .links{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+
+  /* 树根只留文字标签，不再是一个方框 */
+  .root-node{
+    position:relative;z-index:1;
+    width:auto;margin:0 auto;text-align:center;
+    padding:2px 0 6px;
+  }
+  .root-name{display:block;font-size:13px;font-weight:600;color:var(--ink-2);letter-spacing:.4px}
+  .root-meta{display:block;margin-top:2px;font-size:11px;color:var(--ink-3)}
+
+  /* 行由 JS 按可用宽度切分，每行 flex 居中；行间距留给树状总线 */
+  .grid{
+    display:flex;flex-direction:column;gap:76px;
+    margin:78px auto 0;
+    max-width:1180px;
+  }
+  .row{display:flex;justify-content:center;gap:13px}
+  .grid.no-anim .member{animation:none}
+  .member.unsynced{border-style:dashed;border-color:#d7dee9}
+
+  /* ---------- 成员卡 ---------- */
+  .member{
+    position:relative;z-index:1;
+    flex:1 1 172px;min-width:0;max-width:195px;
+    background:var(--card);
+    border:1px solid var(--line);border-radius:15px;
+    padding:10px 11px 9px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 10px 22px -16px rgba(16,24,40,.16);
+    transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+  }
+  .member:hover{
+    transform:translateY(-3px);
+    box-shadow:0 2px 4px rgba(16,24,40,.05),0 18px 30px -18px rgba(16,24,40,.25);
+    border-color:#e2e8f2;
+  }
+  .member.overload{background:linear-gradient(180deg,#fff7f7 0%,#fff 40%)}
+  .member.away,.member.leave{background:linear-gradient(180deg,#fafbfd 0%,#fff 40%)}
+
+  .top{display:flex;align-items:baseline;justify-content:space-between;gap:5px;padding:0 1px}
+  .name{font-size:14.5px;font-weight:650;letter-spacing:.2px}
+  .name em{font-style:normal;font-size:10px;font-weight:600;color:#b45309;background:#fef3c7;border-radius:5px;padding:1px 5px;margin-left:4px;vertical-align:2px}
+  .role{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .scene{margin:1px 0 0;position:relative}
+  .scene svg{display:block;width:100%;height:auto;overflow:visible}
+  /* 地面投影：角色脚下加一圈很淡的接触阴影，
+     加在整块场景底部，让角色不像浮在半空 */
+  .scene::after{
+    content:'';position:absolute;left:18%;right:18%;bottom:6%;
+    height:8px;border-radius:50%;
+    background:radial-gradient(ellipse at center,rgba(16,24,40,.13),rgba(16,24,40,0) 70%);
+    pointer-events:none;z-index:-1;
+  }
+
+  .foot{display:flex;align-items:center;gap:6px;margin-top:1px;padding:0 1px;flex-wrap:wrap}
+  .badge{border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
+  .b-idle{color:var(--idle);background:var(--idle-bg)}
+  .b-normal{color:var(--normal);background:var(--normal-bg)}
+  .b-busy{color:var(--busy);background:var(--busy-bg)}
+  .b-overload{color:var(--overload);background:var(--overload-bg)}
+  .b-away{color:var(--away);background:var(--away-bg)}
+  .b-leave{color:var(--leave);background:var(--leave-bg)}
+  .b-unsync{color:#8a94a6;background:#f2f4f7}
+  .m{font-size:11px;color:var(--ink-3)}
+  .m b{color:var(--ink-2);font-weight:650;font-variant-numeric:tabular-nums}
+  .m.hot b{color:var(--overload)}
+
+  /* ---------- 图例 ---------- */
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:26px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .dot{width:8px;height:8px;border-radius:50%}
+
+  /* ---------- 动效 ---------- */
+  /* 工作节奏：像日漫日常镜头，身体随打字轻轻起伏，幅度极小、周期很长 */
+  .cat,.ape{transform-box:fill-box;transform-origin:50% 100%;animation:work 2.8s ease-in-out infinite}
+  /* 四档节奏，切换时只改 duration，动画进度不中断，所以是平滑加速/减速 */
+  /* 周期直接取自素材：working 67帧≈2.8s，standby-boss 43帧≈1.8s */
+  .ape.idle,.cat.idle{animation-duration:5.6s}          /* 空闲：比 working 更松 */
+  .ape.busy,.cat.busy{animation-duration:1.85s}         /* 忙碌：standby-boss 的节奏 */
+  .ape.overload,.cat.overload{animation-duration:1.5s}  /* 超载：比 standby 再快一档 */
+  .ape.slow,.cat.slow{animation-duration:8s}            /* 睡着：接近 sleeping.keyed */
+
+  /* 特效常驻、按状态淡入淡出，避免显隐时跳变 */
+  .sweat,.smoke{opacity:0;transition:opacity .4s ease}
+  .ape.busy .sweat,.cat.busy .sweat,
+  .ape.overload .sweat,.cat.overload .sweat{opacity:1}
+  .ape.overload .smoke,.cat.overload .smoke{opacity:1}
+  .cat.slow,.ape.slow{animation-duration:6.4s}
+  .eyes{transform-box:fill-box;transform-origin:center;animation:blink 6.4s infinite}
+  .tail{transform-box:fill-box;transform-origin:0% 85%;animation:sway 3.9s ease-in-out infinite}
+  .tasks{animation:slide 5.2s ease-in-out infinite}
+  .member{animation:pop .52s cubic-bezier(.2,.7,.3,1) backwards}
+  /* 幅度按「屏幕像素」倒算过：卡片里 SVG 缩放约 0.6，
+     这里 3.5 单位 ≈ 2.1 屏幕像素，是能看出来但不夸张的量 */
+  @keyframes work{
+    0%   {transform:translateY(0)      rotate(0)}
+    38%  {transform:translateY(-3.5px) rotate(1deg)}
+    72%  {transform:translateY(1.6px)  rotate(-.6deg)}
+    100% {transform:translateY(0)      rotate(0)}
+  }
+  @keyframes blink{0%,90%,100%{transform:scaleY(1)}93%,96%{transform:scaleY(.12)}}
+  @keyframes sway{0%,100%{transform:rotate(0)}50%{transform:rotate(-5deg)}}
+  @keyframes slide{0%,100%{transform:translateY(0)}50%{transform:translateY(-1.4px)}}
+  @keyframes pop{
+    from{opacity:0;transform:translateY(26px) scale(.965)}
+    to{opacity:1;transform:translateY(0) scale(1)}
+  }
+  .zzz text{animation:floatz 3.4s ease-in-out infinite}
+  .zzz text:nth-child(2){animation-delay:.6s}
+  .zzz text:nth-child(3){animation-delay:1.2s}
+  @keyframes floatz{0%{opacity:0;transform:translateY(4px)}30%{opacity:.9}100%{opacity:0;transform:translateY(-10px)}}
+  .cur{animation:caret 1.4s steps(2,end) infinite}
+  @keyframes caret{0%,49%{opacity:.85}50%,100%{opacity:.12}}
+  .upd{margin-top:5px;font-size:11px;color:#b3bbc7}
+
+  /* ---------- 待办面板 ---------- */
+  .doing-btn{cursor:pointer;border-bottom:1px dashed #c9d4e4}
+  .doing-btn.hot{border-bottom-color:#f0c2c2}
+  .doing-btn:hover{color:var(--normal)}
+  .modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center}
+  .modal[hidden]{display:none}
+  .modal-mask{position:absolute;inset:0;background:rgba(16,24,40,.32);backdrop-filter:blur(2px)}
+  .modal-card{
+    position:relative;width:min(420px,calc(100vw - 32px));max-height:76vh;
+    background:#fff;border-radius:16px;display:flex;flex-direction:column;
+    box-shadow:0 24px 60px -24px rgba(16,24,40,.45);
+    animation:pop .22s cubic-bezier(.2,.7,.3,1) both;
+  }
+  .modal-card header{display:flex;align-items:center;gap:8px;padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+  .modal-card header b{font-size:15px}
+  .modal-card header span{font-size:11px;color:var(--ink-3)}
+  .modal-card header button{margin-left:auto;border:0;background:none;font-size:18px;color:var(--ink-3);cursor:pointer;line-height:1}
+  .modal-body{padding:8px 10px;overflow:auto;flex:1}
+  .todo{display:flex;align-items:flex-start;gap:9px;padding:8px 6px;border-radius:9px}
+  .todo:hover{background:#f7f9fc}
+  .todo input{margin-top:2px;accent-color:#2563eb}
+  .todo .t{flex:1;font-size:13px;line-height:1.45}
+  .todo.done .t{color:var(--ink-3);text-decoration:line-through}
+  .todo .src{font-size:10px;color:var(--ink-3);background:#f2f4f7;border-radius:4px;padding:1px 4px}
+  .modal-card footer{padding:10px 12px 14px;border-top:1px solid var(--line)}
+  .modal-card footer input{
+    width:100%;border:1px solid #e3e9f2;border-radius:9px;padding:8px 10px;font-size:13px;
+    font-family:inherit;outline:none;
+  }
+  .modal-card footer input:focus{border-color:#b9cdf0}
+  .md-empty{padding:22px 10px;text-align:center;font-size:12px;color:var(--ink-3)}
+
+  /* ---------- 负载动效 ---------- */
+  /* 空闲：呼吸放慢，看着不慌 */
+  .ape.idle,.cat.idle{animation-duration:6.5s}
+
+  /* 超载：卡片描边泛红 + 光晕脉冲 */
+  .member.overload{
+    border-color:#fecaca;
+    animation:pop .52s cubic-bezier(.2,.7,.3,1) backwards, alarm 2.6s ease-in-out infinite;
+  }
+  @keyframes alarm{
+    0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.22)}
+    50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}
+  }
+
+  /* 汗滴：忙碌时从额角滑落 */
+  .sweat ellipse{
+    fill:#7cb8f0;transform-box:fill-box;transform-origin:center;
+    animation:sweat 2.1s ease-in infinite;
+  }
+  .sweat ellipse:nth-child(2){animation-delay:1s}
+  @keyframes sweat{
+    0%{opacity:0;transform:translateY(-3px) scale(.9)}
+    30%{opacity:1}
+    100%{opacity:0;transform:translateY(9px) scale(1)}
+  }
+
+  /* 烟雾：超载时头顶冒烟 */
+  .smoke circle{
+    fill:#cbd5e1;transform-box:fill-box;transform-origin:center;
+    opacity:0;animation:smoke 2.8s ease-out infinite;
+  }
+  .smoke circle:nth-child(2){animation-delay:.8s}
+  .smoke circle:nth-child(3){animation-delay:1.6s}
+  @keyframes smoke{
+    0%{opacity:.6;transform:translateY(0) scale(.6)}
+    100%{opacity:0;transform:translateY(-18px) scale(1.8)}
+  }
+
+  /* 逾期标记 */
+  .todo .due{font-size:10px;color:var(--ink-3);white-space:nowrap;margin-left:auto;padding-left:8px}
+  .todo .due.over{color:#dc2626;background:#fee2e2;border-radius:4px;padding:1px 5px;margin-left:auto;font-weight:600}
+  .m.over{color:#dc2626}
+  .m.over b{color:#dc2626}
+
+  /* 头部微动：所有角色都在轻微转头，各错开相位。
+     用 CSS 而不是 anime，因为两者都改 transform 会互相覆盖。 */
+  /* 头部左右转是 working 动画里最主要的可见动作，
+     实测幅度约为角色宽度的 12%，换算成这里约 ±5deg */
+  .head{
+    transform-box:fill-box;transform-origin:50% 92%;
+    animation:headSway 2.8s ease-in-out infinite;
+  }
+  .slow .head{animation:none}      /* 睡着的头不动 */
+  @keyframes headSway{
+    0%,100%{transform:rotate(0)}
+    26%    {transform:rotate(-5deg)}
+    62%    {transform:rotate(3.6deg)}
+  }
+
+  /* 悬停：整张卡轻微上浮，不碰角色内部 transform */
+  .member{transition:transform .22s ease, box-shadow .22s ease}
+  .member:hover{
+    transform:translateY(-2px);
+    box-shadow:0 2px 4px rgba(16,24,40,.05),0 14px 30px -20px rgba(16,24,40,.45);
+  }
+
+  /* 首屏镜头：从略大缩回原位，模拟视频结尾那个拉远定格 */
+  #grid{animation:cameraIn .85s cubic-bezier(.16,.84,.4,1) both}
+  @keyframes cameraIn{
+    from{transform:scale(1.045);opacity:.55}
+    to{transform:scale(1);opacity:1}
+  }
+  /* 系统开了「减少动画」时，只关掉装饰性动效（入场、镜头、脉冲），
+     角色本身的呼吸和转头必须保留——否则整面墙会变成静态图。
+     原写法是 *{animation:none}，把角色动作一起杀了。 */
+
+  /* ---------- 四档动作 ---------- */
+  /* 打字：两只爪子交替起落，负载越高频率越快 */
+  .paws{opacity:1;transition:opacity .3s ease}
+  /* 整只爪子一起动，指尖跟着走 */
+  /* 两副手切换：干活回桌面打字，空闲搭在椅背上 */
+  .paws-type,.paws-rest{transition:opacity .35s ease}
+  .paws-type{opacity:0}
+  .actor-back:not(.idle) .paws-type{opacity:1}
+  .actor-back:not(.idle) .paws-rest{opacity:0}
+
+  /* 打字：节奏随负载加快 */
+  .paws-type .paw{
+    transform-box:fill-box;transform-origin:center;
+    animation:typing .46s ease-in-out infinite;
+  }
+  .paws-type .paw.right{animation-delay:.23s}
+  .member.busy .paws-type .paw{animation-duration:.3s}
+  .member.overload .paws-type .paw{animation-duration:.19s}
+
+  /* 搭手：很慢的轻起伏 */
+  .paws-rest .paw{
+    transform-box:fill-box;transform-origin:center;
+    animation:typing 2.2s ease-in-out infinite;
+  }
+  .paws-rest .paw.right{animation-delay:1.1s}
+  .member.idle .paws,.member.leave .paws,.member.away .paws{opacity:0}
+
+  @keyframes typing{
+    0%,100%{transform:translateY(0)}
+    38%    {transform:translateY(-2.6px)}
+    76%    {transform:translateY(1px)}
+  }
+
+  /* 发呆：只有 0 件的时候冒气泡，其余时候收起 */
+  .bubble{opacity:0;transition:opacity .45s ease}
+  .member.idle .bubble{opacity:1}
+  .bubble circle,.bubble ellipse{
+    transform-box:fill-box;transform-origin:center;
+    animation:drift 3.4s ease-in-out infinite;
+  }
+  .bubble circle:nth-child(2){animation-delay:.4s}
+  .bubble ellipse{animation-delay:.8s}
+  @keyframes drift{
+    0%,100%{transform:translateY(0);opacity:.5}
+    50%    {transform:translateY(-2.6px);opacity:.85}
+  }
+
+  /* 超载：乱线抖动 + 明暗闪烁，steps 让它有手绘的跳帧感 */
+  .chaos{opacity:0;transition:opacity .25s ease}
+  .member.overload .chaos{opacity:1}
+  .chaos path{
+    transform-box:fill-box;transform-origin:center;
+    animation:jitter .28s steps(2,end) infinite;
+  }
+  .chaos path:nth-child(2n){animation-delay:.05s}
+  .chaos path:nth-child(3n){animation-delay:.1s}
+  .chaos path:nth-child(4n){animation-delay:.15s}
+  @keyframes jitter{
+    0%,100%{opacity:.9;transform:translate(0,0) scale(1)}
+    50%    {opacity:.45;transform:translate(1.3px,-1.1px) scale(1.08)}
+  }
+
+  /* ---------- 背面视角角色 ---------- */
+  .actor-back{
+    transform-box:fill-box;transform-origin:50% 100%;
+    animation:work 2.8s ease-in-out infinite;
+  }
+  .actor-back.idle{animation-duration:5.6s}
+  .actor-back.busy{animation-duration:1.85s}
+  .actor-back.overload{animation-duration:1.5s}
+  .actor-back.slow{animation-duration:8s}
+
+  /* 背影下转头靠耳朵位移体现，幅度比正面略大才看得出 */
+  .actor-back .head{
+    transform-box:fill-box;transform-origin:50% 94%;
+    animation:headTwist 2.8s ease-in-out infinite;
+  }
+  .actor-back.slow .head{animation:none}
+  @keyframes headTwist{
+    0%,100%{transform:rotate(0)}
+    26%    {transform:rotate(-6.5deg)}
+    62%    {transform:rotate(4.8deg)}
+  }
+
+  /* 汗滴和冒烟改挂到新结构上 */
+  .actor-back.busy .sweat,
+  .actor-back.overload .sweat{opacity:1}
+  .actor-back.overload .smoke{opacity:1}
+
+  /* 指示灯随状态呼吸 */
+  .led{animation:ledPulse 2.6s ease-in-out infinite}
+  @keyframes ledPulse{0%,100%{opacity:.55}50%{opacity:1}}
+  @media (prefers-reduced-motion:reduce){
+    .member{animation:none!important}
+    #grid{animation:none!important}
+    .member.overload{animation:none!important}
+    .sweat ellipse,.smoke circle{animation-duration:4s!important}
+  }
+  @media (max-width:560px){
+    .topbar{flex-direction:column;gap:14px}
+    .lead-card{width:100%;max-width:240px}
+    .member{max-width:240px}
+    .stats .stat{padding:5px 8px;font-size:11px}
+    .stats .stat b{font-size:13px}
+  }
+</style>
+<!-- 动画库：anime.js v3.2.2 (MIT, 17KB)，已 vendor 到本地，不依赖外网 -->
+<script src="/vendor/anime.min.js"></script>
+</head>
+<body>
+<main class="board">
+  <header class="topbar" id="topbar">
+    <div class="head-side">
+      <h1 class="title">示例部门 · 状态树</h1>
+      <div class="crumb">
+        <span>示例公司</span><i>›</i>
+        <span>业务中心</span><i>›</i>
+        <span>职能组</span><i>›</i>
+        <span class="cur">示例部门</span>
+      </div>
+      <div class="upd" id="upd">更新于 —</div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </header>
+
+  <section class="tree" id="tree">
+    <svg class="links" id="links"></svg>
+
+    <div class="root-node" id="rootNode">
+      <span class="root-name">示例部门</span>
+      <span class="root-meta" id="rootMeta">—</span>
+    </div>
+
+    <div class="lead-row" id="leadBox"></div>
+
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <div class="legend">
+    <span><i class="dot" style="background:#10b981"></i>空闲 0 件</span>
+    <span><i class="dot" style="background:#3b82f6"></i>正常 1–4 件</span>
+    <span><i class="dot" style="background:#f59e0b"></i>忙碌 5 件以上</span>
+    <span><i class="dot" style="background:#ef4444"></i>超载 有逾期</span>
+    <span><i class="dot" style="background:#64748b"></i>出差 / 外勤</span>
+    <span><i class="dot" style="background:#06b6d4"></i>休假 / 请假</span>
+  </div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-mask" data-close></div>
+  <div class="modal-card">
+    <header>
+      <b id="mdName">—</b>
+      <span id="mdHint"></span>
+      <button type="button" data-close aria-label="关闭">×</button>
+    </header>
+    <div class="modal-body" id="mdBody"></div>
+    <footer id="mdFoot" hidden>
+      <input id="mdInput" placeholder="加一条待办，回车提交" maxlength="200">
+    </footer>
+  </div>
+</div>
+</main>
+
+<script>
+/* =========================================================
+   数据层
+   这份 MEMBERS 只是兜底名单：接口连不上时用它渲染，避免白屏。
+   正常情况下数据来自 /api/board（飞书通讯录 + 审批同步）。
+   species: 'ape' 猴子（默认）| 'cat' 黑猫
+   ========================================================= */
+/* 内置名单留空：人员数据一律来自 /api/board（飞书通讯录 + 审批同步）。
+   这里不内置任何真实人员信息，避免把组织数据带进代码仓库。
+   接口不可达时页面会给出提示，而不是显示一份假名单。 */
+const MEMBERS = [];
+
+const STATUS = {
+  idle:     { label:'空闲', cls:'b-idle' },
+  normal:   { label:'正常', cls:'b-normal' },
+  busy:     { label:'忙碌', cls:'b-busy' },
+  overload: { label:'超载', cls:'b-overload' },
+  away:     { label:'出差', cls:'b-away' },
+  leave:    { label:'休假', cls:'b-leave' }
+};
+
+/* =========================================================
+   场景绘制（纯 SVG，无外部图片依赖）
+   viewBox 200×184：显示器 → 桌面 → 椅子 → 角色
+   所有角色配色集中在下方 LOOK 配置表里
+   ========================================================= */
+
+/* 角色配色。ape = 猴子，cat = 黑猫 */
+const LOOK = {
+  ape: {
+    body:'#8b6a52', head:'#9a7659',
+    ear:'round', earFill:'#8b6a52', earInner:'#c2a184',
+    faceC:'#f3ddc5', muzzleC:'#fbeade',
+    eyeC:'#2b211a', eyeR:3.2, blushC:'#f3a19b', blushO:.5
+  },
+  cat: {
+    body:'#16181d', head:'#16181d',
+    ear:'pointy', earFill:'#16181d', earInner:'#39404d',
+    faceC:null, muzzleC:null,
+    eyeC:'#f5c542', eyeR:3.8, blushC:'#f08c8c', blushO:.26
+  }
+};
+
+/* =========================================================
+   工位场景（背面视角）
+   角色背对镜头坐在椅子上，桌面在身前，显示器只看到背面。
+   这个视角下手是搭在桌沿上的，不会被身体挡住——正面视角时
+   手和头、身体在同一个高度区间，怎么画都会被吃掉。
+   ========================================================= */
+
+function floorShadow(){
+  return `<ellipse cx="100" cy="176" rx="54" ry="5.5" fill="#eef2f7" opacity=".9"/>`;
+}
+
+function monitorBack(m){
+  // V9 版显示器：白框 + 满屏底色 + 任务条，数量跟着待办走
+  const away  = (m.status === 'away');
+  const leave = (m.status === 'leave');
+  const lv = loadOf(m) || 'normal';
+
+  const palette = {
+    idle:     ['#bfdbfe', '#93c5fd'],
+    normal:   ['#93c5fd', '#60a5fa', '#3b82f6'],
+    busy:     ['#fcd34d', '#fbbf24', '#f59e0b'],
+    overload: ['#fca5a5', '#f87171', '#ef4444']
+  }[lv] || ['#93c5fd'];
+
+  const barW = [34, 26, 38, 22];
+  let bars = '';
+
+  if (leave){
+    bars = `<text x="100" y="40" text-anchor="middle" font-size="7.5" font-weight="600"
+                  fill="#94a3b8" letter-spacing="1.2">OFF</text>`;
+  } else if (away){
+    bars = `<text x="100" y="40" text-anchor="middle" font-size="7.5" font-weight="600"
+                  fill="#94a3b8" letter-spacing="1.2">AWAY</text>`;
+  } else {
+    const n = Math.max(1, Math.min(m.doing || 0, 4));
+    for (let i = 0; i < n; i++){
+      bars += `<rect x="80" y="${27 + i * 6}" width="${barW[i]}" height="3" rx="1.5"
+                     fill="${palette[i % palette.length]}"/>`;
+    }
+  }
+
+  // 有俯角，所以能看到屏幕正面；外壳比屏幕大一圈
+  return `
+    <rect x="70" y="16" width="60" height="44" rx="4" fill="#eef3f9" stroke="#dde5f0" stroke-width="1.2"/>
+    <rect x="74" y="20" width="52" height="36" rx="2.5" fill="${(away || leave) ? '#334155' : '#e8f1ff'}"/>
+    <g class="screen">${bars}</g>
+    <rect x="95" y="60" width="10" height="10" fill="#e5ebf4"/>
+    <rect x="86" y="69" width="28" height="3.5" rx="1.75" fill="#e2e8f0"/>`;
+}
+
+function deskBack(){
+  // V9 桌面：远窄近宽的梯形台面（有俯角），两条腿撑到地面
+  return `
+    <ellipse cx="100" cy="170" rx="52" ry="4.5" fill="#e9edf3" opacity=".5"/>
+    <rect x="33" y="82" width="6" height="82" rx="3" fill="#e9eef6"/>
+    <rect x="161" y="82" width="6" height="82" rx="3" fill="#e9eef6"/>
+    <path d="M28 74 L172 74 L182 82 L18 82 Z" fill="#f9fbfe" stroke="#e6ecf5" stroke-width="1"/>
+    <path d="M18 82 L182 82 L182 84.5 L18 84.5 Z" fill="#e9eff7"/>`;
+}
+
+function chairBack(){
+  // 办公椅四段式：靠背（白壳 + 内衬）→ 座面 → 气压柱 → 五星脚 + 滚轮
+  // 靠背正好盖住角色下半身，人只露出头和肩
+  return `
+    <rect x="62" y="135" width="76" height="24" rx="11" fill="#ffffff"
+          stroke="#e3e9f2" stroke-width="1.2"/>
+    <rect x="68.5" y="139.5" width="63" height="14" rx="6.5" fill="#eff3f9"/>
+
+    <rect x="57" y="158" width="86" height="7.5" rx="3.8" fill="#e7ecf3"/>
+    <rect x="58.5" y="158" width="83" height="3" rx="1.5" fill="#f2f5fa"/>
+
+    <path d="M100 164 L100 170" stroke="#d5dce6" stroke-width="6" stroke-linecap="round"/>
+    <path d="M100 171 L72 175.5 M100 171 L128 175.5 M100 171 L100 177"
+          stroke="#cfd7e2" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+    <circle cx="72" cy="176" r="2.4" fill="#c6cfdb"/>
+    <circle cx="128" cy="176" r="2.4" fill="#c6cfdb"/>
+    <circle cx="100" cy="178" r="2.3" fill="#c6cfdb"/>`;
+}
+
+function tailSVG(m){
+  // 尾巴在椅子之后绘制，才能压住椅背边缘、看起来是从身后绕出来的。
+  // 猴子粗一号带卷，猫细一号带钩。
+  if (m.status === 'away' || m.status === 'leave') return '';
+  const isCat = m.species === 'cat';
+  const c = isCat ? '#16181d' : '#916d52';
+  return `<g class="tail">
+    <path d="M136 150 C154 152 160 138 150 128 C143 121 132 124 134 133"
+          fill="none" stroke="${c}" stroke-width="${isCat ? 4.2 : 5.6}"
+          stroke-linecap="round"/>
+  </g>`;
+}
+
+function deskProps(m){
+  // 桌上的小物摆在角色两侧，避开肩膀
+  const cup = m.status === 'leave' ? '' : `
+    <g class="cup">
+      <rect x="150" y="65" width="9" height="11" rx="2" fill="#ffffff" stroke="#e2e8f0" stroke-width=".9"/>
+      <rect x="150" y="67" width="9" height="2.4" fill="${m.scarf}" opacity=".6"/>
+    </g>`;
+
+  // 休假：椅背上搭一只枕头（浅浅带一点本人围巾色），和出差的行李箱区分
+  const pillow = m.status === 'leave' ? `
+    <g class="pillow">
+      <rect x="126" y="71" width="36" height="14" rx="7" fill="#ffffff"
+            stroke="#e3e9f2" stroke-width="1.1"/>
+      <rect x="131" y="74.5" width="26" height="7" rx="3.5" fill="${m.scarf}" opacity=".22"/>
+    </g>` : '';
+
+  return `${cup}
+    <rect x="40" y="69" width="16" height="2" rx="1" fill="#e6ecf5"/>
+    <rect x="40" y="72" width="11" height="2" rx="1" fill="#eef2f7"/>${pillow}`;
+}
+
+/* 斜后视坐姿：后脑朝外、头略向左转，露出左眼和鼻尖。
+   V9 版：五官直接画在头部圆内缘，不贴色块，所以不会错位。 */
+function actorBack(m, i){
+  const L = LOOK[m.species === 'cat' ? 'cat' : 'ape'];
+  const load = loadOf(m);
+  const delay = (-(i * 0.31) % 4).toFixed(2);
+  const isCat = m.species === 'cat';
+  const earC = L.earFill;
+
+  // 猫：尖耳立头顶（往中间收，别支在两个角上）
+  // 猴：大圆耳压出轮廓，内耳用脸斑同色的浅棕——内耳是猴耳的标配
+  const ears = isCat
+    ? `<path d="M95 97 L91 82 L108 93 Z" fill="${earC}"/>
+       <path d="M117 96 L122 82 L107 92 Z" fill="${earC}"/>`
+    : `<circle cx="126" cy="105" r="10.5" fill="${earC}"/>
+       <circle cx="126" cy="105" r="5.4" fill="#e6c39c"/>
+       <circle cx="74" cy="110" r="8.4" fill="${earC}"/>
+       <circle cx="74" cy="110" r="4.3" fill="#e6c39c"/>`;
+
+  return `<g class="actor-back ${load || 'normal'}" style="animation-delay:${delay}s">
+    <!-- 头和身子整体上移 10：肩线顶到桌沿，头正好露在桌面之上 -->
+    <g transform="translate(0,-10)">
+      <ellipse cx="100" cy="147" rx="27" ry="20" fill="${L.body}"/>
+
+      <path d="M76 132 Q100 142 124 132 L124 125 Q100 135 76 125 Z" fill="${m.scarf}" opacity=".95"/>
+
+      <g class="head" style="animation-delay:${(delay * 0.55).toFixed(2)}s">
+        <circle cx="100" cy="112" r="20" fill="${L.head}"/>
+        ${ears}
+
+        ${isCat ? `
+        <ellipse cx="87" cy="111" rx="2.6" ry="3.2" fill="${L.eyeC}"/>
+        <circle cx="87.7" cy="110.1" r=".8" fill="rgba(255,255,255,.8)"/>
+
+        <path d="M80.6 115.4 l2.6 -1.5 l0 2.9 z" fill="#e8888a"/>
+        <path d="M80.6 119.4 q2.6 1.7 5 0" stroke="#0d0f13" stroke-width=".85"
+              fill="none" stroke-linecap="round" opacity=".45"/>
+        ` : `
+        <!-- 头顶呆毛：卡哇伊标配 -->
+        <circle cx="97" cy="92" r="3.2" fill="${L.head}"/>
+        <circle cx="102" cy="90.5" r="3.6" fill="${L.head}"/>
+        <circle cx="107" cy="92" r="3" fill="${L.head}"/>
+
+        <!-- 花生形脸斑：明显比毛色浅，这是猴子最硬的识别特征 -->
+        <ellipse cx="91" cy="112" rx="11.5" ry="12.8" fill="#eed3b6"/>
+        <ellipse cx="80" cy="119.5" rx="6.4" ry="5.4" fill="#eed3b6"/>
+
+        <!-- 大眼睛 + 高光 -->
+        <ellipse cx="91.5" cy="108" rx="2.9" ry="3.4" fill="${L.eyeC}"/>
+        <circle cx="92.4" cy="106.9" r="1" fill="#ffffff"/>
+
+        <!-- 鼻、笑弧、腮红 -->
+        <ellipse cx="83" cy="116.5" rx="1.9" ry="1.4" fill="#7a5a44"/>
+        <path d="M79.4 122 q4.4 2.6 8 .3" stroke="#7a5a44" stroke-width="1.2"
+              fill="none" stroke-linecap="round"/>
+        <ellipse cx="97" cy="115.5" rx="2.9" ry="1.8" fill="${L.blushC}" opacity=".45"/>
+        <ellipse cx="76.5" cy="114" rx="2.2" ry="1.4" fill="${L.blushC}" opacity=".3"/>
+        `}
+      </g>
+    </g>
+
+    <!-- 干活：手回到桌面打字；空闲：手搭在椅背上。
+         两副都常驻，用 opacity 切换，切换时不重建节点 -->
+    <g class="paws-type">
+      <g class="paw left">
+        <ellipse cx="72" cy="80" rx="6" ry="4.2" fill="${L.body}" stroke="rgba(0,0,0,.16)" stroke-width=".8"/>
+        <circle cx="68.6" cy="77.6" r="1.5" fill="${L.body}"/>
+        <circle cx="72" cy="76.6" r="1.5" fill="${L.body}"/>
+        <circle cx="75.4" cy="77.6" r="1.5" fill="${L.body}"/>
+      </g>
+      <g class="paw right">
+        <ellipse cx="128" cy="80" rx="6" ry="4.2" fill="${L.body}" stroke="rgba(0,0,0,.16)" stroke-width=".8"/>
+        <circle cx="124.6" cy="77.6" r="1.5" fill="${L.body}"/>
+        <circle cx="128" cy="76.6" r="1.5" fill="${L.body}"/>
+        <circle cx="131.4" cy="77.6" r="1.5" fill="${L.body}"/>
+      </g>
+    </g>
+
+    <g class="paws-rest">
+      <g class="paw left">
+        <ellipse cx="69" cy="134" rx="6" ry="4.4" fill="${L.body}" stroke="rgba(0,0,0,.16)" stroke-width=".8"/>
+        <circle cx="65.6" cy="131.4" r="1.5" fill="${L.body}"/>
+        <circle cx="69" cy="130.4" r="1.5" fill="${L.body}"/>
+        <circle cx="72.4" cy="131.4" r="1.5" fill="${L.body}"/>
+      </g>
+      <g class="paw right">
+        <ellipse cx="131" cy="134" rx="6" ry="4.4" fill="${L.body}" stroke="rgba(0,0,0,.16)" stroke-width=".8"/>
+        <circle cx="127.6" cy="131.4" r="1.5" fill="${L.body}"/>
+        <circle cx="131" cy="130.4" r="1.5" fill="${L.body}"/>
+        <circle cx="134.4" cy="131.4" r="1.5" fill="${L.body}"/>
+      </g>
+    </g>
+
+    ${bubbleSVG()}
+    ${chaosSVG()}
+    ${fxSVG()}
+  </g>`;
+}
+
+/* 休假：整个人趴下去，只剩后脑勺压在桌沿 */
+function actorSleepBack(m, i){
+  // 休假：人不画出来（和出差一致的空位），只留 Zzz 飘着；
+  // 椅背上的枕头在 deskProps 里画（那时椅子已绘制，能压在椅背上）
+  return `${zzzSVG()}`;
+}
+
+/* 出差：椅子空着，桌上放一只行李 */
+function actorAwayBack(m, i){
+  return `
+    <g>
+      <rect x="130" y="56" width="30" height="25" rx="4" fill="${m.scarf}"/>
+      <rect x="130" y="62.5" width="30" height="2.4" fill="#ffffff" opacity=".38"/>
+      <rect x="138" y="50" width="14" height="7" rx="3.5" fill="none" stroke="${m.scarf}" stroke-width="2"/>
+      <circle cx="136" cy="83" r="2.2" fill="#cbd5e1"/>
+      <circle cx="154" cy="83" r="2.2" fill="#cbd5e1"/>
+    </g>`;
+}
+
+function actorFor(m, i){
+  if (m.status === 'away')  return actorAwayBack(m, i);
+  if (m.status === 'leave') return actorSleepBack(m, i);
+  return actorBack(m, i);
+}
+
+function scene(m, i){
+  return `<svg viewBox="0 0 200 184" role="img" aria-label="${m.name} 的工位">
+    ${floorShadow()}
+    ${monitorBack(m)}
+    ${deskBack()}
+    ${actorFor(m, i)}
+    ${chairBack()}
+    ${tailSVG(m)}
+    ${deskProps(m)}
+  </svg>`;
+}
+
+/* ---- 状态元件（坐标按背面视角重排） ---- */
+
+function loadOf(m){
+  if ((m.overdue || 0) > 0) return 'overload';
+  if ((m.doing || 0) >= 5) return 'busy';
+  if (!(m.doing || 0) && m.status === 'normal') return 'idle';
+  return '';
+}
+
+/* 汗滴从右侧耳朵下方滑落，冒烟从头顶升起 */
+function fxSVG(){
+  return `<g class="sweat">
+      <ellipse cx="123" cy="98" rx="2.1" ry="2.9"/>
+      <ellipse cx="127" cy="106" rx="1.6" ry="2.2"/>
+    </g>
+    <g class="smoke">
+      <circle cx="92" cy="80" r="3"/>
+      <circle cx="100" cy="76" r="3.6"/>
+      <circle cx="108" cy="80" r="3"/>
+    </g>`;
+}
+
+/* 发呆：头顶右上方冒三个渐大的气泡 */
+function bubbleSVG(){
+  return `<g class="bubble" fill="none" stroke="#b6bfcc" stroke-width="1.1">
+    <circle cx="124" cy="92" r="2"/>
+    <circle cx="131" cy="84" r="3"/>
+    <ellipse cx="141" cy="74" rx="6.6" ry="5" fill="#ffffff"/>
+  </g>`;
+}
+
+/* 超载：围绕后脑勺的放射状乱线 */
+function chaosSVG(){
+  return `<g class="chaos" stroke="#1f2937" stroke-width="1.4"
+            fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M74 96 l-6 -4 l4 -2 l-7 -5"/>
+    <path d="M84 84 l-3 -6 l4 -1 l-5 -7"/>
+    <path d="M100 78 l0 -7 l2 4 l0 -8"/>
+    <path d="M116 84 l3 -6 l-4 -1 l5 -7"/>
+    <path d="M126 96 l6 -4 l-4 -2 l7 -5"/>
+    <path d="M66 112 l-6 -1 l3 -3 l-7 -1"/>
+    <path d="M134 112 l6 -1 l-3 -3 l7 -1"/>
+    <path d="M70 130 l-6 3 l3 2 l-6 3"/>
+    <path d="M130 130 l6 3 l-3 2 l6 3"/>
+  </g>`;
+}
+
+function zzzSVG(){
+  return `<g class="zzz" fill="#9aa5b5" font-family="system-ui" font-weight="700">
+    <text x="148" y="66" font-size="7">z</text>
+    <text x="156" y="56" font-size="9">z</text>
+    <text x="166" y="44" font-size="11">Z</text>
+  </g>`;
+}
+
+/* =========================================================
+   渲染
+   ========================================================= */
+function badge(m){
+  if (m.synced === false){
+    return `<span class="badge b-unsync" title="飞书通讯录里没取到这个人，配置应用身份后可拉到全员">未同步</span>`;
+  }
+  // 在岗但有逾期 → 徽章直接标超载，避免出现「正常 · 逾期 2」这种自相矛盾的组合
+  if (m.status === 'normal' && (m.overdue || 0) > 0){
+    return '<span class="badge b-overload">超载</span>';
+  }
+  const s = STATUS[m.status] || STATUS.normal;
+  const extra = m.loc ? `·${m.loc}` : '';
+  return `<span class="badge ${s.cls}">${s.label}${extra}</span>`;
+}
+
+function metrics(m){
+  if (m.synced === false) return `<span class="m">飞书无记录</span>`;
+  if (m.status === 'away' || m.status === 'leave'){
+    return `<span class="m">暂无在办</span>`;
+  }
+  // 「在办」和「逾期」都能点开同一个待办面板——之前只有「在办」挂了点击类，
+  // 超载卡片上点「逾期 2」毫无反应，看着像坏了
+  const attrs = m.open_id
+    ? ` data-open-id="${m.open_id}" data-name="${esc(m.name)}"`
+    : '';
+  const tap = m.open_id ? ' doing-btn' : '';
+
+  let out = `<span class="m${tap}"${attrs}>在办 <b>${m.doing}</b></span>`;
+  if (m.overdue > 0){
+    out += `<span class="m hot${tap}"${attrs}>逾期 <b>${m.overdue}</b></span>`;
+  }
+  return out;
+}
+
+function memberCard(m, i){
+  const lead = m.lead ? '<em>负责人</em>' : '';
+  const un = m.synced === false ? ' unsynced' : '';
+  const load = loadOf(m);
+  const loadCls = load ? ' ' + load : '';
+  return `<article class="member ${m.status}${loadCls}${un}" data-id="${m.open_id || ''}" style="animation-delay:${i * 45}ms">
+    <div class="top">
+      <span class="name">${m.name}${lead}</span>
+      <span class="role">${m.role}</span>
+    </div>
+    <div class="scene">${scene(m, i)}</div>
+    <div class="foot">${badge(m)}${metrics(m)}</div>
+  </article>`;
+}
+
+let SYNC_NOTE = '数据源：本地示例';
+let CURRENT_LIST = [];   // 当前展示的成员，窗口变化时用它重新分行
+
+function stamp(){
+  const now = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const el = document.getElementById('upd');
+  if (el){
+    el.textContent =
+      `更新于 ${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())} `
+      + `${p(now.getHours())}:${p(now.getMinutes())} · ${SYNC_NOTE}`;
+  }
+}
+
+/* ---------- 自适应分行 ----------
+   按可用宽度算每行能放几张卡，再均分成若干行（每行 flex 居中） */
+function calcCols(count){
+  const board = document.querySelector('.board');
+  const avail = (board ? board.clientWidth : window.innerWidth) - 44;
+  return Math.max(1, Math.min(count, 6, Math.floor((avail + 13) / 185)));
+}
+
+function renderRows(list, animate){
+  const grid = document.getElementById('grid');
+  grid.classList.toggle('no-anim', animate === false);
+
+  const cols = calcCols(list.length);
+  const rowCount = Math.max(1, Math.ceil(list.length / cols));
+  // 均分：前 extra 行各多 1 人，避免末行只剩一两个
+  const base = Math.floor(list.length / rowCount);
+  const extra = list.length % rowCount;
+
+  let html = '', idx = 0, cursor = 0;
+  for (let r = 0; r < rowCount; r++){
+    const take = base + (r < extra ? 1 : 0);
+    const slice = list.slice(cursor, cursor + take);
+    cursor += take;
+    html += `<div class="row">${slice.map(m => memberCard(m, idx++)).join('')}</div>`;
+  }
+  grid.innerHTML = html;
+  return cols;
+}
+
+/* 树形连接线：根 → 每行一条总线，行数由实际排版决定 */
+function drawLinks(){
+  const tree = document.getElementById('tree');
+  const svg  = document.getElementById('links');
+  const root = document.getElementById('rootNode');
+  const grid = document.getElementById('grid');
+  if (!tree || !root || !grid) return;
+
+  const t = tree.getBoundingClientRect();
+  svg.setAttribute('width', t.width);
+  svg.setAttribute('height', t.height);
+
+  const lead = document.querySelector('#leadBox .member');
+  const rows = [...grid.querySelectorAll('.row')];
+  if (!rows.length){ svg.innerHTML = ''; return; }
+
+  const segs = [];
+  const rootCx = root.offsetLeft + root.offsetWidth / 2;
+  const rootBottom = root.offsetTop + root.offsetHeight;
+
+  // 部门 → 负责人
+  let prevX = lead ? lead.offsetLeft + lead.offsetWidth / 2 : rootCx;
+  let prevY = lead ? lead.offsetTop + lead.offsetHeight : rootBottom;
+
+  if (lead){
+    if (Math.abs(rootCx - prevX) < 1){
+      segs.push(`M${rootCx},${rootBottom} V${prevY}`);
+    } else {
+      const midY = (rootBottom + prevY) / 2;
+      segs.push(`M${rootCx},${rootBottom} V${midY} H${prevX} V${prevY}`);
+    }
+  }
+
+  // 负责人 → 各行成员
+
+  rows.forEach(row => {
+    const cards = [...row.children];
+    if (!cards.length) return;
+
+    // 用 offset* 取坐标，避开入场动画的 transform
+    const pts = cards.map(c => ({
+      x: c.offsetLeft + c.offsetWidth / 2,
+      y: c.offsetTop
+    }));
+
+    const busY = Math.min(...pts.map(p => p.y)) - 30;
+    const xs = pts.map(p => p.x);
+    const x1 = Math.min(...xs, prevX);
+    const x2 = Math.max(...xs, prevX);
+
+    segs.push(`M${prevX},${prevY} V${busY}`);
+    if (x2 - x1 > 1) segs.push(`M${x1},${busY} H${x2}`);
+    pts.forEach(p => segs.push(`M${p.x},${busY} V${p.y}`));
+
+    prevX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    prevY = busY;
+  });
+
+  svg.innerHTML = segs.map(d =>
+    `<path d="${d}" fill="none" stroke="#c2cddd" stroke-width="1.8" stroke-linecap="round"/>`
+  ).join('');
+}
+
+function renderStats(list){
+  const onDuty = list.filter(m => m.status !== 'away' && m.status !== 'leave').length;
+  const away   = list.filter(m => m.status === 'away').length;
+  const leave  = list.filter(m => m.status === 'leave').length;
+  const over   = list.filter(m => m.overdue > 0).length;
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><b>${list.length}</b>总人数</div>
+    <div class="stat"><b>${onDuty}</b>在岗</div>
+    <div class="stat away"><b>${away}</b>出差</div>
+    <div class="stat"><b>${leave}</b>休假</div>
+    <div class="stat warn"><b>${over}</b>超载</div>`;
+}
+
+function render(list, source){
+  const lead = list.find(m => m.lead);
+  const rest = lead ? list.filter(m => m !== lead) : list;
+
+  // 负责人用同一张成员卡，置顶展示
+  const box = document.getElementById('leadBox');
+  if (lead) box.innerHTML = memberCard(lead, 0);
+
+  renderRows(rest, true);
+  CURRENT_LIST = rest;
+
+  const synced = list.filter(m => m.synced).length;
+  renderStats(list);
+
+  document.getElementById('rootMeta').textContent =
+    `${list.length} 人${lead ? ' · 负责人 ' + lead.name : ''}`;
+
+  SYNC_NOTE = source === 'demo'
+    ? '演示模式 · 六种状态的动效对比，数据为构造值'
+    : (source === 'feishu'
+        ? `数据源：飞书实时 · ${synced} / ${list.length} 人已同步`
+        : '数据源：本地示例（未连上后端）');
+
+  stamp();
+  if (!render._timer) render._timer = setInterval(stamp, 30000);
+
+  stamp();
+  requestAnimationFrame(() => requestAnimationFrame(drawLinks));
+  initMotion();
+
+  // 每 30 秒拉一次状态，走差量更新，动画不会被打断
+  if (!render._poll){
+    render._poll = setInterval(() => {
+      if (isDemo() || document.hidden) return;
+      refreshBoard();
+    }, 30000);
+  }
+}
+
+/* =========================================================
+   动效层（anime.js）
+   CSS 负责持续循环（呼吸、眨眼、摆尾），这类动画纯 transform、开销低；
+   anime.js 负责事件驱动的一次性动作（悬停抬头、待机歪头），
+   这类动作需要随机时间点和弹性缓动，用 CSS 写会堆一堆 keyframes。
+   anime 不可用时整层静默跳过，页面退化为静态版，不会白屏。
+   ========================================================= */
+let motionReady = false;
+
+function initMotion(){
+  if (motionReady || typeof anime !== 'function') return;
+  motionReady = true;
+
+  // 注意：这里不再用 anime 操作 .head 的 transform。
+  // 头部已经由 CSS 的 headSway 持续驱动，anime 再写同一个属性会把它顶掉，
+  // 结果是「动一下然后卡住」。悬停反馈改由 CSS 的 .member:hover 负责。
+
+  // 头部改由 CSS 持续微动后，这里不再需要定时挑人歪头
+}
+
+
+/* =========================================================
+   待办面板
+   来源两张：飞书任务（自动同步）+ 手工补录（可增删）
+   只有本人登录后可写；看别人的卡片是只读。
+   ========================================================= */
+let ME = null;
+
+async function loadMe(){
+  try{
+    const r = await fetch('/api/me', {cache:'no-store'});
+    const d = await r.json();
+    if (d.ok) ME = d;
+  }catch(e){ /* 未登录时静默 */ }
+}
+
+function esc(t){
+  return String(t == null ? '' : t).replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function renderTodos(items, editable){
+  const body = document.getElementById('mdBody');
+  if (!items.length){
+    body.innerHTML = '<div class="md-empty">暂无待办' + (editable ? '，在下方添加一条' : '') + '</div>';
+    return;
+  }
+  const nowSec = Math.floor(Date.now() / 1000);
+  body.innerHTML = items.map(function(t){
+    const done = t.status === 'done';
+    // 三个来源在同一个弹窗里出现，标清楚免得「我在表格改的怎么没变」这类疑问
+    const SRC = { feishu: '飞书任务', bitable: '表格', im: '群消息' };
+    const tag = SRC[t.source] ? '<span class="src">' + SRC[t.source] + '</span>' : '';
+    const box = editable
+      ? '<input type="checkbox" ' + (done ? 'checked' : '') + ' data-id="' + t.id + '" data-act="toggle">'
+      : '<input type="checkbox" disabled ' + (done ? 'checked' : '') + '>';
+
+    let due = '';
+    if (t.due_ts){
+      const d = new Date(t.due_ts * 1000);
+      const over = !done && t.due_ts < nowSec;
+      const days = Math.max(1, Math.round((nowSec - t.due_ts) / 86400));
+      const label = over ? ('逾期 ' + days + ' 天') : ((d.getMonth() + 1) + '/' + d.getDate());
+      due = '<span class="due' + (over ? ' over' : '') + '">' + label + '</span>';
+    }
+
+    return '<label class="todo ' + (done ? 'done' : '') + '">' + box +
+      '<span class="t">' + esc(t.title) + '</span>' + tag + due + '</label>';
+  }).join('');
+}
+
+/* demo 页的待办：按卡片编号造出来，让逾期标记看得见 */
+function demoTodos(openId){
+  const now = Math.floor(Date.now() / 1000);
+  const day = 86400;
+  const titles = ['对接渠道方','整理周报数据','供应商比价','活动物料确认','复盘会议纪要',
+                  '客户回访','月度目标拆解','新人带教','投放素材审核'];
+  const mk = (n, overdueN) => Array.from({length: n}, (_, i) => ({
+    id: openId + '_' + i,
+    title: titles[i % titles.length] + ' ' + (i + 1),
+    status: 'open',
+    source: i % 3 === 0 ? 'feishu' : 'manual',
+    due_ts: i < overdueN ? now - day * (i + 1) : now + day * (i + 2),
+  }));
+  const map = { demo1: [], demo2: mk(3, 0), demo3: mk(6, 0), demo4: mk(9, 2), demo5: [], demo6: [] };
+  return map[openId] || [];
+}
+
+async function openTodos(openId, name){
+  const modal = document.getElementById('modal');
+  document.getElementById('mdName').textContent = name;
+  document.getElementById('mdHint').textContent = '加载中…';
+  document.getElementById('mdBody').innerHTML = '';
+  document.getElementById('mdFoot').hidden = true;
+  modal.hidden = false;
+  modal.dataset.openId = openId;
+
+  if (isDemo()){
+    const list = demoTodos(openId);
+    document.getElementById('mdHint').textContent = '演示数据 · ' + list.length + ' 条';
+    document.getElementById('mdFoot').hidden = true;
+    renderTodos(list, false);
+    return;
+  }
+
+  let items = [];
+  let authExpired = false;
+  try{
+    const r = await fetch('/api/todos?open_id=' + encodeURIComponent(openId), {cache:'no-store'});
+    if (r.status === 401) authExpired = true;
+    const d = await r.json().catch(() => ({}));
+    items = d.items || [];
+  }catch(e){ /* 网络失败按空处理 */ }
+
+  if (authExpired){
+    document.getElementById('mdHint').textContent = '登录已过期';
+    document.getElementById('mdBody').innerHTML =
+      '<div class="md-empty">登录状态失效了，<a href="/login">点这里重新授权</a>后刷新本页</div>';
+    return;
+  }
+
+  // 「能不能编辑」和「是不是我」是两件事：
+  //   本人 → 能改，提示「这是我」
+  //   管理员（负责人/系统维护者）→ 也能改，提示「代 XX 录入」
+  //   其他人 → 只读，并说明为什么
+  const self = !!(ME && ME.open_id === openId);
+  const mine = !!(ME && (self || ME.is_admin));
+  const label = self ? '这是我'
+              : (mine ? '代 ' + name + ' 录入'
+                      : '只读 · 仅本人或负责人可改');
+
+  const hint = document.getElementById('mdHint');
+  hint.dataset.base = label;
+  hint.textContent = label + ' · ' + items.length + ' 条';
+
+  document.getElementById('mdFoot').hidden = !mine;
+  const input = document.getElementById('mdInput');
+  if (input) input.placeholder = self ? '加一条待办，回车提交'
+                                      : '代 ' + name + ' 加一条，回车提交';
+  renderTodos(items, mine);
+}
+
+async function reloadTodos(){
+  const openId = document.getElementById('modal').dataset.openId;
+  const r = await fetch('/api/todos?open_id=' + encodeURIComponent(openId), {cache:'no-store'});
+  const d = await r.json();
+  renderTodos(d.items || [], true);
+  // 刷新时保留身份提示，别把「代 XX 录入」覆盖成「这是我」
+  const hint = document.getElementById('mdHint');
+  hint.textContent = (hint.dataset.base || '这是我') + ' · ' + (d.items || []).length + ' 条';
+  setTimeout(refreshBoard, 400);
+}
+
+document.addEventListener('change', async function(e){
+  const el = e.target;
+  if (!el.matches('input[data-act="toggle"]')) return;
+  await fetch('/api/todos/toggle', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: el.dataset.id})
+  });
+  const card = el.closest('.todo');
+  if (card) card.classList.toggle('done', el.checked);
+  await reloadTodos();          // 面板里的计数和排序跟着变
+  setTimeout(refreshBoard, 400);
+});
+
+document.addEventListener('keydown', async function(e){
+  if (e.key === 'Escape') document.getElementById('modal').hidden = true;
+  if (e.key !== 'Enter') return;
+  if (e.target.id !== 'mdInput') return;
+  const title = e.target.value.trim();
+  if (!title) return;
+  e.target.value = '';
+  await fetch('/api/todos', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({open_id: document.getElementById('modal').dataset.openId, title: title})
+  });
+  await reloadTodos();
+});
+
+document.addEventListener('click', function(e){
+  if (e.target.closest('[data-close]')) document.getElementById('modal').hidden = true;
+});
+
+/* 差量更新：人数没变就只改 class 和数字，SVG 节点原地不动，
+   动画不会从头播放，状态切换是连续的。 */
+function applyBoard(list, source){
+  const lead = list.find(m => m.lead);
+  const rest = lead ? list.filter(m => m !== lead) : list;
+  const grid = document.getElementById('grid');
+  const nodes = [...grid.querySelectorAll('.member')];
+
+  if (nodes.length !== rest.length){
+    render(list, source);          // 人数变了，整体重排
+    return;
+  }
+
+  const byId = new Map(nodes.map(el => [el.dataset.id, el]));
+
+  const patch = (el, m) => {
+    const load = loadOf(m);
+    el.className = 'member ' + m.status
+      + (load ? ' ' + load : '')
+      + (m.synced === false ? ' unsynced' : '');
+    const foot = el.querySelector('.foot');
+    if (foot) foot.innerHTML = badge(m) + metrics(m);
+  };
+
+  rest.forEach(m => {
+    const el = byId.get(m.open_id || '');
+    if (el) patch(el, m);
+  });
+
+  if (lead){
+    const box = document.getElementById('leadBox');
+    const el = box.querySelector('.member');
+    if (el) patch(el, lead);
+    else box.innerHTML = memberCard(lead, 0);
+  }
+
+  CURRENT_LIST = rest;
+  renderStats(list);
+  document.getElementById('rootMeta').textContent =
+    `${list.length} 人${lead ? ' · 负责人 ' + lead.name : ''}`;
+  stamp();
+  requestAnimationFrame(() => requestAnimationFrame(drawLinks));
+}
+
+async function refreshBoard(){
+  const remote = await fetchBoard();
+  if (!remote) return;
+  applyBoard(mergeWithLocal(remote.members), 'feishu');
+}
+
+/* ---------- 数据接入 ----------
+   /api/board 不可达时（比如直接用 file:// 打开）自动回落到内置名单 */
+async function fetchBoard(){
+  try{
+    const r = await fetch('/api/board', {cache:'no-store'});
+    if (!r.ok) return null;
+    const d = await r.json();
+    return (d.members && d.members.length) ? d : null;
+  }catch(e){
+    return null;
+  }
+}
+
+/* 飞书返回的人只带 open_id / scarf，其余展示字段沿用本地名单；
+   名单里没有的新人会追加进来 */
+function mergeWithLocal(remote){
+  const map = new Map(remote.map(m => [m.name, m]));
+  const merged = MEMBERS.map(m => {
+    const r = map.get(m.name);
+    if (!r) return { ...m, synced: false };
+    // 状态一律以飞书为准，本地只兜底展示字段
+    return {
+      ...m,
+      name: r.name,
+      open_id: r.open_id,
+      scarf: r.scarf || m.scarf,
+      status: r.status,
+      loc: r.loc,
+      doing: r.doing,
+      overdue: r.overdue,
+      lead: !!r.lead,
+      species: r.species || m.species,
+      synced: true
+    };
+  });
+  const known = new Set(MEMBERS.map(m => m.name));
+  remote.forEach(r => {
+    if (!known.has(r.name)) merged.push({ ...r, role: '成员', synced: true });
+  });
+  return merged;
+}
+
+/* 演示模式：/demo 下不请求接口，用固定数据把四种负载状态铺开，
+   方便直接看动效差异。 */
+const DEMO = [
+  {name:'空闲', role:'0 件', status:'normal', doing:0, overdue:0, scarf:'#10b981', species:'ape',  lead:false, synced:true, open_id:'demo1'},
+  {name:'正常', role:'3 件', status:'normal', doing:3, overdue:0, scarf:'#3b82f6', species:'ape',  lead:false, synced:true, open_id:'demo2'},
+  {name:'忙碌', role:'6 件', status:'normal', doing:6, overdue:0, scarf:'#f59e0b', species:'cat',  lead:false, synced:true, open_id:'demo3'},
+  {name:'超载', role:'9 件·2 逾期', status:'normal', doing:9, overdue:2, scarf:'#ef4444', species:'cat', lead:false, synced:true, open_id:'demo4'},
+  {name:'出差', role:'江苏苏州', status:'away', doing:0, overdue:0, scarf:'#8b5cf6', species:'ape', lead:false, synced:true, open_id:'demo5'},
+  {name:'休假', role:'年假', status:'leave', doing:0, overdue:0, scarf:'#06b6d4', species:'ape', lead:false, synced:true, open_id:'demo6'},
+];
+
+function isDemo(){
+  return location.pathname.replace(/\/+$/, '') === '/demo';
+}
+
+async function boot(){
+  if (isDemo()){
+    render(DEMO, 'demo');
+    const note = document.getElementById('syncNote');
+    if (note) note.textContent = '演示模式 · 六种状态的动效对比，数据为构造值';
+    return;
+  }
+  await loadMe();
+  const remote = await fetchBoard();
+
+  if (remote){
+    render(mergeWithLocal(remote.members), 'feishu');
+    return;
+  }
+
+  // 内置名单已清空（不把真实人员写进代码），没有接口数据时明确报错，
+  // 而不是渲染一份假名单让人误以为是真的
+  if (MEMBERS.length){
+    render(MEMBERS, 'local');
+    return;
+  }
+
+  const grid = document.getElementById('grid');
+  if (grid){
+    grid.innerHTML = '<div class="md-empty">未连上后端服务，请确认 server.py 已启动</div>';
+  }
+}
+
+// 负责人卡片渲染在 #leadBox、其余人在 #grid。
+// 只绑 #grid 会让负责人的「在办」完全点不动，所以统一在 document 上做委托。
+document.addEventListener('click', function(e){
+  const btn = e.target.closest('.doing-btn');
+  if (!btn) return;
+  openTodos(btn.dataset.openId, btn.dataset.name);
+});
+
+boot();
+
+/* 窗口变化时重新分行并重画连线（防抖，避免拖动窗口时抖动） */
+let relayoutTimer = null;
+function relayout(){
+  clearTimeout(relayoutTimer);
+  relayoutTimer = setTimeout(() => {
+    if (CURRENT_LIST.length) renderRows(CURRENT_LIST, false);
+    requestAnimationFrame(drawLinks);
+  }, 120);
+}
+
+window.addEventListener('resize', relayout);
+window.addEventListener('orientationchange', relayout);
+if (window.ResizeObserver){
+  const board = document.querySelector('.board');
+  if (board) new ResizeObserver(relayout).observe(board);
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(drawLinks);
+</script>
+</body>
+</html>

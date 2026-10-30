@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>示例部门 · 状态看板</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#fff; --line:#e5eaf2;
+    --ink:#1b2231; --ink2:#5a6578; --ink3:#98a2b3; --accent:#2563eb;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    display:flex;align-items:center;justify-content:center;
+    min-height:100vh;padding:24px;
+  }
+  .wrap{width:100%;max-width:560px}
+
+  .hero{
+    background:var(--card);border:1px solid var(--line);border-radius:18px;
+    padding:26px 26px 22px;margin-bottom:14px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04),0 16px 40px -28px rgba(16,24,40,.35);
+  }
+  .kicker{font-size:11px;letter-spacing:.12em;color:var(--ink3);text-transform:uppercase;margin-bottom:10px}
+  h1{margin:0 0 8px;font-size:23px;letter-spacing:-.3px}
+  .sub{color:var(--ink2);font-size:13.5px;line-height:1.65;margin:0 0 20px}
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    width:100%;padding:13px 18px;border-radius:11px;
+    background:var(--accent);color:#fff;text-decoration:none;
+    font-size:14.5px;font-weight:600;letter-spacing:.2px;
+    transition:transform .12s ease,box-shadow .2s ease;
+    box-shadow:0 8px 20px -10px rgba(37,99,235,.7);
+  }
+  .btn:hover{transform:translateY(-1px);box-shadow:0 12px 24px -10px rgba(37,99,235,.78)}
+  .btn:active{transform:translateY(0)}
+  .hint{font-size:11.5px;color:var(--ink3);text-align:center;margin:10px 0 0}
+
+  .grid{display:grid;gap:12px}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:16px 18px;
+  }
+  .card h2{margin:0 0 10px;font-size:13px;color:var(--ink2);font-weight:650;letter-spacing:.02em}
+  .card ul{margin:0;padding-left:0;list-style:none}
+  .card li{
+    position:relative;padding-left:16px;margin:7px 0;
+    font-size:13px;line-height:1.6;color:var(--ink2);
+  }
+  .card li::before{
+    content:"";position:absolute;left:2px;top:9px;
+    width:5px;height:5px;border-radius:50%;background:#c7d2e4;
+  }
+  .card b{color:var(--ink);font-weight:600}
+
+  .foot{text-align:center;font-size:11.5px;color:#b3bbc7;margin-top:16px;line-height:1.8}
+
+  @media (max-width:480px){
+    body{padding:16px;align-items:flex-start}
+    .hero{padding:22px 20px 18px}
+    h1{font-size:20px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <section class="hero">
+    <div class="kicker">示例公司 · 示例部门</div>
+    <h1>示例部门状态看板</h1>
+    <p class="sub">
+      谁在忙、谁不在、每个人手上还有几件事。<br>
+      打开就能看，不用装任何东西。
+    </p>
+
+    <a class="btn" href="/login">用飞书账号进入 →</a>
+    <p class="hint">仅限本部门成员。第一次进入需要授权一次，之后浏览器会记住。</p>
+  </section>
+
+  <div class="grid">
+
+    <div class="card">
+      <h2>进去能看到什么</h2>
+      <ul>
+        <li>每个人现在是 <b>在岗 / 出差 / 休假</b></li>
+        <li>手上还有几件事在办，有没有逾期</li>
+        <li>点卡片上的「在办 N」，能看具体待办、勾掉做完的、加新的</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>待办怎么填</h2>
+      <ul>
+        <li>点自己卡片下面的「在办 N」打开清单</li>
+        <li>底部输入框打字，<b>回车就加上</b></li>
+        <li>做完点前面的勾，数字自动减一</li>
+        <li>只能改自己的，看别人的卡片是只读</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>两件不用你操心的事</h2>
+      <ul>
+        <li><b>出差和请假</b>会从飞书审批自动同步，不用另外报</li>
+        <li><b>飞书任务</b>里记的事会自动带过来，不用重复录</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>进不去怎么办</h2>
+      <ul>
+        <li>确认连的是<b>公司网络</b>，手机流量打不开</li>
+        <li>提示「不是本部门成员」→ 联系管理员</li>
+        <li>页面空白或一直转 → 刷新一次，还不行联系管理员</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <p class="foot">
+    内部工具 · 数据只存放在部门自己的电脑上，不上传第三方
+  </p>
+
+</div>
+</body>
+</html>

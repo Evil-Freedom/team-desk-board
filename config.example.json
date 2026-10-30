@@ -1,0 +1,39 @@
+{
+  "app_id": "cli_xxxxxxxxxxxxxxxx",
+  "app_secret": "请填入飞书应用的 App Secret",
+  "department": "示例部门",
+  "department_id": "",
+  "sync_minutes": 5,
+  "feishu_domain": "feishu",
+  "identity": "bot",
+  "base_url": "http://127.0.0.1:8900",
+  "allow_departments": [
+    "示例部门"
+  ],
+  "bootstrap_lead": "",
+  "todo_admins": [],
+  "oauth_scope": "offline_access task:task:read",
+  "digest_hour": 9,
+  "digest_chat_id": "",
+  "notify_open_ids": [],
+  "approvals": [
+    {
+      "code": "请填入请假审批的定义 code",
+      "kind": "leave",
+      "label": "请假"
+    },
+    {
+      "code": "请填入出差审批的定义 code",
+      "kind": "travel",
+      "label": "出差申请"
+    }
+  ],
+  "bitable": {
+    "base_token": "",
+    "table_id": "",
+    "url": ""
+  },
+  "im_todo": {
+    "chat_id": ""
+  }
+}

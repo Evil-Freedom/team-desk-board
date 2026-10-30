@@ -1,0 +1,48 @@
+# ---------- 凭据与运行时数据（绝不能提交）----------
+# 含 app_secret、群 ID、多维表格 token、内网地址
+config.json
+config.local.json
+
+# 含全部用户的 access_token / refresh_token / open_id
+board.db
+*.db
+*.sqlite
+*.sqlite3
+
+# 运行日志（可能含接口报错原文）
+logs/
+*.log
+
+# 本地排查材料：配置备份、网络备份、临时补丁脚本、诊断日志
+_local/
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# ---------- Node ----------
+node_modules/
+tunnel/node_modules/
+npm-debug.log*
+
+# ---------- 系统与编辑器 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---------- 临时产物 ----------
+*.tmp
+*.bak
+*.orig
+preview*.svg
+_scenes.json
