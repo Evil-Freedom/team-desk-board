@@ -817,6 +817,11 @@ function badge(m){
   if (m.status === 'normal' && (m.overdue || 0) > 0){
     return '<span class="badge b-overload">超载</span>';
   }
+  // 在岗且 ≥5 件 → 标忙碌。否则卡片写着「正常」、小人却在跑忙碌节奏，
+  // 文字和动画对不上，看图的人只会觉得"它到底忙不忙"
+  if (m.status === 'normal' && (m.doing || 0) >= 5){
+    return '<span class="badge b-busy">忙碌</span>';
+  }
   const s = STATUS[m.status] || STATUS.normal;
   const extra = m.loc ? `·${m.loc}` : '';
   return `<span class="badge ${s.cls}">${s.label}${extra}</span>`;
