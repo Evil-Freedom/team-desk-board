@@ -48,6 +48,7 @@
   .crumb i{font-style:normal;color:#c8d0dc}
   .crumb .cur{color:var(--ink-2);font-weight:600}
   .upd{font-size:11px;color:#b3bbc7;margin:0}
+  .upd.stale{color:#d97706}
 
   .stats{display:flex;flex-wrap:wrap;gap:7px}
   .stat{
@@ -152,6 +153,21 @@
   .eyes{transform-box:fill-box;transform-origin:center;animation:blink 6.4s infinite}
   .tail{transform-box:fill-box;transform-origin:0% 85%;animation:sway 3.9s ease-in-out infinite}
   .tasks{animation:slide 5.2s ease-in-out infinite}
+
+  /* 显示器任务条：配色跟着负载档位（.scene 的 data-load），
+     显隐跟着在办数（.screen 的 data-doing）。
+     全部由属性驱动，状态变化时只改属性就能重绘，不必重建 SVG。 */
+  .scene .screen .bar{fill:var(--b1,#60a5fa);transition:fill .35s ease,opacity .35s ease}
+  .scene .screen .bar.b2{fill:var(--b2,#3b82f6)}
+  .scene .screen .bar.b3{fill:var(--b3,#93c5fd)}
+  .scene .screen .bar.b4{fill:var(--b4,#60a5fa)}
+  .scene[data-load="idle"]    {--b1:#bfdbfe;--b2:#93c5fd;--b3:#bfdbfe;--b4:#93c5fd}
+  .scene[data-load="normal"]  {--b1:#93c5fd;--b2:#60a5fa;--b3:#3b82f6;--b4:#60a5fa}
+  .scene[data-load="busy"]    {--b1:#fcd34d;--b2:#fbbf24;--b3:#f59e0b;--b4:#fcd34d}
+  .scene[data-load="overload"]{--b1:#fca5a5;--b2:#f87171;--b3:#ef4444;--b4:#f87171}
+  .scene .screen[data-doing="1"] .bar:nth-child(n+2),
+  .scene .screen[data-doing="2"] .bar:nth-child(n+3),
+  .scene .screen[data-doing="3"] .bar:nth-child(n+4){opacity:.14}
   .member{animation:pop .52s cubic-bezier(.2,.7,.3,1) backwards}
   /* 幅度按「屏幕像素」倒算过：卡片里 SVG 缩放约 0.6，
      这里 3.5 单位 ≈ 2.1 屏幕像素，是能看出来但不夸张的量 */
@@ -502,17 +518,12 @@ function floorShadow(){
 }
 
 function monitorBack(m){
-  // V9 版显示器：白框 + 满屏底色 + 任务条，数量跟着待办走
+  // V9 版显示器：白框 + 满屏底色 + 任务条
+  // 固定画 4 条，条数与配色交给 data-doing / data-load 控制——
+  // 原来按 doing 数量动态生成 rect，状态一变条数就过期，
+  // 而差量更新不重建 SVG，于是屏幕永远停在旧状态。
   const away  = (m.status === 'away');
   const leave = (m.status === 'leave');
-  const lv = loadOf(m) || 'normal';
-
-  const palette = {
-    idle:     ['#bfdbfe', '#93c5fd'],
-    normal:   ['#93c5fd', '#60a5fa', '#3b82f6'],
-    busy:     ['#fcd34d', '#fbbf24', '#f59e0b'],
-    overload: ['#fca5a5', '#f87171', '#ef4444']
-  }[lv] || ['#93c5fd'];
 
   const barW = [34, 26, 38, 22];
   let bars = '';
@@ -524,18 +535,19 @@ function monitorBack(m){
     bars = `<text x="100" y="40" text-anchor="middle" font-size="7.5" font-weight="600"
                   fill="#94a3b8" letter-spacing="1.2">AWAY</text>`;
   } else {
-    const n = Math.max(1, Math.min(m.doing || 0, 4));
-    for (let i = 0; i < n; i++){
-      bars += `<rect x="80" y="${27 + i * 6}" width="${barW[i]}" height="3" rx="1.5"
-                     fill="${palette[i % palette.length]}"/>`;
+    for (let i = 0; i < 4; i++){
+      bars += `<rect class="bar b${i + 1}" x="80" y="${27 + i * 6}"
+                     width="${barW[i]}" height="3" rx="1.5"/>`;
     }
   }
+
+  const shown = Math.max(1, Math.min(m.doing || 0, 4));
 
   // 有俯角，所以能看到屏幕正面；外壳比屏幕大一圈
   return `
     <rect x="70" y="16" width="60" height="44" rx="4" fill="#eef3f9" stroke="#dde5f0" stroke-width="1.2"/>
     <rect x="74" y="20" width="52" height="36" rx="2.5" fill="${(away || leave) ? '#334155' : '#e8f1ff'}"/>
-    <g class="screen">${bars}</g>
+    <g class="screen" data-doing="${shown}">${bars}</g>
     <rect x="95" y="60" width="10" height="10" fill="#e5ebf4"/>
     <rect x="86" y="69" width="28" height="3.5" rx="1.75" fill="#e2e8f0"/>`;
 }
@@ -839,23 +851,40 @@ function memberCard(m, i){
       <span class="name">${m.name}${lead}</span>
       <span class="role">${m.role}</span>
     </div>
-    <div class="scene">${scene(m, i)}</div>
+    <div class="scene" data-load="${load || 'normal'}">${scene(m, i)}</div>
     <div class="foot">${badge(m)}${metrics(m)}</div>
   </article>`;
 }
 
 let SYNC_NOTE = '数据源：本地示例';
 let CURRENT_LIST = [];   // 当前展示的成员，窗口变化时用它重新分行
+let LAST_OK = 0;         // 最近一次成功拿到 board 数据的时刻，0 = 还没拿到
+const POLL_MS = 10000;   // 前台轮询间隔；后台不轮询，靠 visibilitychange 补
 
 function stamp(){
-  const now = new Date();
   const p = n => String(n).padStart(2, '0');
   const el = document.getElementById('upd');
-  if (el){
-    el.textContent =
-      `更新于 ${now.getFullYear()}-${p(now.getMonth()+1)}-${p(now.getDate())} `
-      + `${p(now.getHours())}:${p(now.getMinutes())} · ${SYNC_NOTE}`;
+  if (!el) return;
+
+  if (isDemo()){
+    el.textContent = SYNC_NOTE;
+    el.classList.remove('stale');
+    return;
   }
+  if (!LAST_OK){
+    el.textContent = '尚未从服务端取到数据 · ' + SYNC_NOTE;
+    el.classList.add('stale');
+    return;
+  }
+  const d = new Date(LAST_OK);
+  // 时间戳必须反映"数据是什么时候的"，不能每次都写当前时间——
+  // 否则页面挂着不刷新，也会显示成"刚刚更新"。
+  const stale = (Date.now() - LAST_OK) > POLL_MS * 2;
+  el.textContent =
+    `更新于 ${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} `
+    + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} · ${SYNC_NOTE}`
+    + (stale ? ' · 可能已过期' : '');
+  el.classList.toggle('stale', stale);
 }
 
 /* ---------- 自适应分行 ----------
@@ -994,12 +1023,13 @@ function render(list, source){
   requestAnimationFrame(() => requestAnimationFrame(drawLinks));
   initMotion();
 
-  // 每 30 秒拉一次状态，走差量更新，动画不会被打断
+  // 前台每 10 秒拉一次，走差量更新，动画不会被打断；
+  // 后台不拉（省电、省接口），切回来由 visibilitychange 立即补一次
   if (!render._poll){
     render._poll = setInterval(() => {
       if (isDemo() || document.hidden) return;
       refreshBoard();
-    }, 30000);
+    }, POLL_MS);
   }
 }
 
@@ -1153,7 +1183,6 @@ async function reloadTodos(){
   // 刷新时保留身份提示，别把「代 XX 录入」覆盖成「这是我」
   const hint = document.getElementById('mdHint');
   hint.textContent = (hint.dataset.base || '这是我') + ' · ' + (d.items || []).length + ' 条';
-  setTimeout(refreshBoard, 400);
 }
 
 document.addEventListener('change', async function(e){
@@ -1167,7 +1196,8 @@ document.addEventListener('change', async function(e){
   const card = el.closest('.todo');
   if (card) card.classList.toggle('done', el.checked);
   await reloadTodos();          // 面板里的计数和排序跟着变
-  setTimeout(refreshBoard, 400);
+  // 立刻回拉一次：接口已经在本地库改完状态，这里不该再等
+  await refreshBoard();
 });
 
 document.addEventListener('keydown', async function(e){
@@ -1209,6 +1239,22 @@ function applyBoard(list, source){
     el.className = 'member ' + m.status
       + (load ? ' ' + load : '')
       + (m.synced === false ? ' unsynced' : '');
+
+    // 负载档位在渲染时烘进了 SVG（<g class="actor-back busy">），
+    // 只改卡片 class 的话，徽章变了、小人的节奏还停在上一档。
+    // 这里必须连带换掉，动画才会跟着状态走。
+    el.querySelectorAll('.actor-back').forEach(g => {
+      g.classList.remove('normal', 'idle', 'busy', 'overload');
+      g.classList.add(load || 'normal');
+    });
+
+    const sc = el.querySelector('.scene');
+    if (sc){
+      sc.setAttribute('data-load', load || 'normal');
+      const screen = sc.querySelector('.screen');
+      if (screen) screen.setAttribute('data-doing', Math.max(1, Math.min(m.doing || 0, 4)));
+    }
+
     const foot = el.querySelector('.foot');
     if (foot) foot.innerHTML = badge(m) + metrics(m);
   };
@@ -1246,7 +1292,9 @@ async function fetchBoard(){
     const r = await fetch('/api/board', {cache:'no-store'});
     if (!r.ok) return null;
     const d = await r.json();
-    return (d.members && d.members.length) ? d : null;
+    if (!(d.members && d.members.length)) return null;
+    LAST_OK = Date.now();
+    return d;
   }catch(e){
     return null;
   }
@@ -1333,6 +1381,16 @@ document.addEventListener('click', function(e){
 });
 
 boot();
+
+/* 切回这个标签页 / 窗口重新获得焦点时立刻补一次。
+   原来只在定时器里拉，且 document.hidden 时直接跳过，
+   于是切回来最多要干等一整个轮询周期，看着像"卡住了"。 */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !isDemo()) refreshBoard();
+});
+window.addEventListener('focus', () => {
+  if (!isDemo()) refreshBoard();
+});
 
 /* 窗口变化时重新分行并重画连线（防抖，避免拖动窗口时抖动） */
 let relayoutTimer = null;

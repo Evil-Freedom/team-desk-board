@@ -430,12 +430,19 @@ class Handler(SimpleHTTPRequestHandler):
 
             if path == "/api/todos/toggle":
                 tid = body.get("id")
-                if not self._can_edit(me, tasks_mod.owner_of(tid)):
+                owner = tasks_mod.owner_of(tid)
+                if not self._can_edit(me, owner):
                     return self._json(DENY, 403)
                 ok, new_status = tasks_mod.toggle(tid, body.get("status"))
                 # 多维表格来源的要写回表格，否则下轮同步会覆盖回未完成
                 synced = bitable_mod.update_status(tid, new_status) if new_status else True
-                return self._json({"ok": ok, "status": new_status, "synced": synced})
+                # 顺带回传这个人的新计数：调用方拿到就能就地校正，
+                # 不必为了一个数字再拉一次全量 board
+                c = tasks_mod.summary_by_person().get(owner) or {}
+                return self._json({"ok": ok, "status": new_status, "synced": synced,
+                                   "open_id": owner,
+                                   "doing": c.get("doing", 0),
+                                   "overdue": c.get("overdue", 0)})
 
             tid = body.get("id")
             if not self._can_edit(me, tasks_mod.owner_of(tid)):
