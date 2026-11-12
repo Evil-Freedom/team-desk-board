@@ -823,7 +823,8 @@ function badge(m){
     return '<span class="badge b-busy">忙碌</span>';
   }
   const s = STATUS[m.status] || STATUS.normal;
-  const extra = m.loc ? `·${m.loc}` : '';
+  // 只有出差带地点；休假不显示事由（调休/治疗陪同属于个人隐私）
+  const extra = (m.status === 'away' && m.loc) ? `·${m.loc}` : '';
   return `<span class="badge ${s.cls}">${s.label}${extra}</span>`;
 }
 
