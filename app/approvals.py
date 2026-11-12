@@ -10,7 +10,11 @@
         ↓ GET /approval/v4/instances            拿实例 code 列表（应用身份）
         ↓ GET /approval/v4/instances/{code}     拿表单详情（已入库的跳过）
         ↓ _extract()                            从原生控件里抽出时间段
-    absences(open_id, kind, start_ts, end_ts, city)
+    absences(open_id, kind, start_ts, end_ts, city, reason)
+
+关于 reason 列：
+    请假行的 reason 存的是「假期类型」（年假 / 调休假 / 病假），不是申请人
+    手写的事由。事由属个人隐私，看板和群推送都不需要，也就不落库。
 
 关于字段映射：
     飞书的「请假」用 leaveGroupV2 控件，「出差」用 tripGroup 控件，
@@ -144,17 +148,26 @@ def _extract(instance, mapping):
         return None
 
     city = period.get("city") or period.get("destination") or period.get("城市")
-    reason = period.get("reason") or period.get("说明")
-    label = period.get("name") or ""
+    label = period.get("name") or ""            # 请假/出差控件里的「类型」：年假、调休假…
+    detail = period.get("reason") or period.get("说明")   # 自由填写的「事由」
+    kind = mapping.get("kind") or "leave"
+
+    # 请假只留「假期类型」，事由（治疗陪同、私事…）属于个人隐私：
+    # 既不落库也不推送，看板只需要知道谁今天不在、是哪种假。
+    # 出差不走这条路，它的异常信息本来就是「去哪」。
+    if kind == "leave":
+        text = label if isinstance(label, str) and label.strip() else "请假"
+    else:
+        text = detail if isinstance(detail, str) and detail.strip() else (label or None)
 
     return {
         "id": instance.get("instance_code") or instance.get("code"),
         "open_id": open_id,
-        "kind": mapping.get("kind") or "leave",
+        "kind": kind,
         "start_ts": start,
         "end_ts": end,
         "city": city if isinstance(city, str) else None,
-        "reason": reason if isinstance(reason, str) else (label or None),
+        "reason": text,
         "raw": json.dumps(instance, ensure_ascii=False)[:4000],
     }
 
@@ -245,7 +258,8 @@ def _extract_summary(item, mapping):
         "start_ts": start,
         "end_ts": end,
         "city": pick("城市", "目的地", "地点"),
-        "reason": pick("事由", "原因", "说明") or pick("假期类型"),
+        # 只认「假期类型」（年假/调休假/病假），不取「事由」——事由不进看板也不进推送
+        "reason": pick("假期类型", "假期种类", "假别", "类型"),
         "raw": json.dumps(item, ensure_ascii=False)[:4000],
     }
 

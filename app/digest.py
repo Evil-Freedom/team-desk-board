@@ -50,17 +50,15 @@ def build_text():
 
     lines = [f"【{_dept()} · 今日状态】", " · ".join(head_parts)]
 
-    def detail(group, tag, with_loc=True):
-        """with_loc=False 时不拼 loc——休假行只留姓名，不带事由。"""
+    def detail(group, tag):
+        """休假行的 loc 是假期类型（年假/调休假），不是事由——事由在同步阶段已丢弃。"""
         if not group:
             return None
-        items = [f"{p['name']}·{p['loc']}" if (with_loc and p.get("loc")) else p["name"]
-                 for p in group]
+        items = [f"{p['name']}·{p['loc']}" if p.get("loc") else p["name"] for p in group]
         return f"{tag}：" + "、".join(items)
 
-    # 出差保留城市（找人用得上），休假不显示事由
-    for g, tag, with_loc in ((away, "出差", True), (leave, "休假", False)):
-        line = detail(g, tag, with_loc)
+    for g, tag in ((away, "出差"), (leave, "休假")):
+        line = detail(g, tag)
         if line:
             lines.append(line)
 

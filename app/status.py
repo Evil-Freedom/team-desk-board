@@ -72,11 +72,11 @@ def short_place(raw):
 def derive(absences, now=None):
     """单人：返回 (status, loc)。status ∈ normal / away / leave。
 
-    loc 只承载「地点」，不再承载请假事由：
-        调休 / 治疗陪同 这类事由属于个人隐私，看板与群推送只需要知道
-        「今天不在」，不需要知道为什么。审批里的 reason 仍会入库
-        （absences.reason），只是不再派发到 members.loc。
-        出差的城市要保留——「谁在哪」是同事找人时真正用得上的信息。
+    loc 对两种状态含义不同：
+        出差 → 城市（「谁在哪」是找人时真正用得上的信息）
+        请假 → 假期类型：年假 / 调休假 / 病假 ……
+    请假不再带「事由」（治疗陪同、私事这类），审批同步阶段就已经丢掉，
+    这里只做兜底：万一类型是空的，统一显示「请假」。
     """
     now = now or int(time.time())
     active = [a for a in absences if a["start_ts"] <= now <= a["end_ts"]]
@@ -85,7 +85,7 @@ def derive(absences, now=None):
 
     leave = next((a for a in active if a["kind"] in LEAVE_KINDS), None)
     if leave:
-        return "leave", None
+        return "leave", leave.get("reason") or "请假"
 
     away = next((a for a in active if a["kind"] in AWAY_KINDS), None)
     if away:
