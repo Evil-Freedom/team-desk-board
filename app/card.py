@@ -171,6 +171,9 @@ def _status_text(d):
 
 
 def _stat(value, label, color):
+    # 无异常时不要用告警色：0 个人出差还亮着橙色，等于天天误报
+    if not value:
+        color = "grey"
     """四列人数里的一列：数字大、标签小。四列在手机上会等比缩，
     所以标签最多 4 个字（「今日应到」「在岗」「出差」「请假」）。"""
     return {
@@ -271,11 +274,23 @@ def _overdue_module(d):
     pad = "10px 12px 10px 12px"
 
     if not people:
+        # 零逾期不能挤成一行灰字：结构要和其他模块一致（左标题 / 右徽标），
+        # 否则卡片底部会突然"塌"下去一块
+        head = {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "small",
+                "columns": [
+                    {"tag": "column", "width": "weighted", "weight": 3,
+                     "vertical_align": "center",
+                     "elements": [{"tag": "markdown",
+                                   "content": "<font color='grey'>**逾期提醒**</font>"}]},
+                    {"tag": "column", "width": "auto", "vertical_align": "center",
+                     "horizontal_align": "right",
+                     "elements": [{"tag": "markdown", "text_align": "right",
+                                   "content": "<text_tag color='neutral'>0 件</text_tag>"}]},
+                ]}
         return {"tag": "column_set", "flex_mode": "none", "columns": [{
             "tag": "column", "width": "weighted", "weight": 1,
-            "background_style": "grey-50", "padding": "8px 12px 8px 12px",
-            "elements": [{"tag": "markdown", "text_size": "notation",
-                          "content": "<font color='grey'>逾期提醒　暂无逾期事项</font>"}],
+            "background_style": "grey-50", "padding": "10px 12px 10px 12px",
+            "elements": [head],
         }]}
 
     # 姓名放宽到 20 字：10 字会把「测试超长姓名」切成「测试超长姓」，
@@ -300,7 +315,7 @@ def _overdue_module(d):
                  "elements": [{"tag": "markdown", "text_align": "right",
                                "text_size": "heading-0",
                                "content": (f"<font color='red'>**{d['overdue_total']}**</font>"
-                                           f"<font color='red' size='12'> 件</font>")}]},
+                                           f"<font color='grey' size='12'>** 件**</font>")}]},
             ],
         }],
     }]}

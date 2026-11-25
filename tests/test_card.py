@@ -178,8 +178,10 @@ class CardTest(unittest.TestCase):
                  busy=[(3, 0, "王赵盼")], overdue_total=0)
         c = card.build(data=d)
         blob = json.dumps(c, ensure_ascii=False)
-        self.assertIn("暂无逾期事项", blob)
-        self.assertNotIn("逾期提醒</font>", blob)   # 没有红色标题
+        # 零逾期也走左右分栏：左标题 + 右「0 件」中性胶囊，不出现红色
+        self.assertIn("0 件", blob)
+        self.assertIn("逾期提醒", blob)
+        self.assertNotIn("<font color='red'>**逾期提醒**", blob)
 
     def test_overdue_shows_big_red_number(self):
         self._seed()
