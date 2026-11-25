@@ -158,13 +158,15 @@ def _claim(key, version=BODY_VERSION):
         return False, row, "状态异常，拒绝发送"
 
 
-def _mark(key, status, message_id=None, note=""):
+def _mark(key, status, message_id=None, note="", target_chat_id=None):
+    """落库发送结果。target_chat_id 必须一起记：
+    事后要回答「这条公告到底发到哪个群」，只能靠这一列，不能靠 note 里的字符串。"""
     with db.session() as conn:
         conn.execute(
-            "UPDATE announcements SET status=?, message_id=?, sent_at=?, note=? "
-            "WHERE announcement_key=?",
+            "UPDATE announcements SET status=?, message_id=?, sent_at=?, note=?, "
+            "target_chat_id=COALESCE(?, target_chat_id) WHERE announcement_key=?",
             (status, message_id, int(time.time()) if status == "SENT" else None,
-             str(note)[:300], key))
+             str(note)[:300], target_chat_id, key))
 
 
 def send_launch(key=KEY, force_preflight=True):
@@ -181,7 +183,7 @@ def send_launch(key=KEY, force_preflight=True):
     text = f"{TITLE}\n\n{BODY}"
     ok, err, mid = notify.send_to_chat_ex(chat_id, text)
     if ok:
-        _mark(key, "SENT", mid, f"chat={chat_id}")
+        _mark(key, "SENT", mid, f"chat={chat_id}", target_chat_id=chat_id)
         db.log(True, "announce", f"上线公告已发送 message_id={mid}")
         return {"ok": True, "message_id": mid, "target_chat_id": chat_id,
                 "body_version": BODY_VERSION}
@@ -260,7 +262,7 @@ def send_external_notice(key=EXT_KEY):
     text = "\n\n".join([EXT_TITLE, EXT_BODY])
     ok, err, mid = notify.send_to_chat_ex(chat_id, text)
     if ok:
-        _mark(key, "SENT", mid, f"chat={chat_id} ver={EXT_VERSION}")
+        _mark(key, "SENT", mid, f"chat={chat_id} ver={EXT_VERSION}", target_chat_id=chat_id)
         db.log(True, "announce", f"外网访问通知已发送 message_id={mid}")
         return {"ok": True, "message_id": mid, "target_chat_id": chat_id,
                 "body_version": EXT_VERSION, "text": text}
