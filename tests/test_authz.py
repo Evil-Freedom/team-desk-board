@@ -150,6 +150,25 @@ class AuthzTest(unittest.TestCase):
             self.assertIn(status, (302, 404), msg=path)
             self.assertNotIn(b"SQLite", str(body).encode(), msg=path)
 
+    def test_forged_cookie_rejected(self):
+        """抄一个别人的 open_id 拼 Cookie，签名对不上必须 401。"""
+        status, _ = self.req("/api/board", "ou_admin.1795610000.deadbeef")
+        self.assertEqual(401, status)
+
+    def test_legacy_cookie_upgraded_once(self):
+        """旧明文 Cookie 放行一次，同时回发签名 Cookie；之后旧格式失效。"""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/api/board", headers={"Cookie": "uid=ou_admin"})
+        r = conn.getresponse()
+        r.read()
+        cookies = r.getheaders()
+        conn.close()
+        self.assertEqual(200, r.status)
+        issued = [v for k, v in cookies if k.lower() == "set-cookie"]
+        self.assertTrue(issued, "旧格式必须换发新 Cookie")
+        self.assertIn("HttpOnly", issued[0])
+        self.assertIn(".", issued[0].split("uid=")[1].split(";")[0])
+
     def test_demo_page_is_open(self):
         status, _ = self.req("/demo")
         self.assertEqual(200, status)

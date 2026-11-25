@@ -25,6 +25,7 @@ from . import im_todo as im_todo_mod
 from . import digest as digest_mod
 from . import internal_auth
 from . import notify
+from . import session
 from . import morning
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -199,6 +200,9 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        ck = getattr(self, "_upgrade_cookie", None)
+        if ck:
+            self.send_header("Set-Cookie", ck)
         self.end_headers()
         self.wfile.write(body)
 
@@ -267,7 +271,13 @@ class Handler(SimpleHTTPRequestHandler):
         r = approvals_mod.sync_for_user(open_id, token["access_token"])
         status.apply_all()
 
-        self._cookie = f"uid={open_id}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax"
+        value = session.issue(open_id)
+        if not value:
+            return self._html(
+                "<h3>服务端未配置会话密钥</h3>"
+                "<p>board.env 里缺少 QL_INTERNAL_TOKEN / BOARD_SESSION_SECRET，"
+                "无法安全签发登录态。请联系负责人补齐后重试。</p>", 500)
+        self._cookie = session.cookie_header(value, self._secure_request())
         return self._html(
             f"<h3>授权成功</h3><p>{name}，已同步 {r.get('fresh', 0)} 条审批记录。</p>"
             f"<p><a href='/'>回到看板</a></p>")
@@ -279,7 +289,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
-        cookie = getattr(self, "_cookie", None)
+        cookie = getattr(self, "_cookie", None) or getattr(self, "_upgrade_cookie", None)
         if cookie:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()
@@ -343,9 +353,15 @@ class Handler(SimpleHTTPRequestHandler):
         通讯录权限没开时 dept 可能为 None，此时放行但标记为待核实，
         等权限开通后会自动收紧。
         """
-        uid = self._uid()
-        if not uid:
+        uid, state = self._session()
+        if state not in ("ok", "legacy") or not uid:
             return None
+        if state == "legacy":
+            # 旧明文 Cookie：本次放行，同时立刻换发签名 Cookie。
+            # 换发之后旧格式不再被接受，伪造 open_id 的窗口只在这一个请求内。
+            fresh = session.issue(uid)
+            if fresh:
+                self._upgrade_cookie = session.cookie_header(fresh, self._secure_request())
         now = int(time.time())
         with db.session() as conn:
             u = conn.execute(
@@ -456,13 +472,24 @@ class Handler(SimpleHTTPRequestHandler):
         """管理员只看 config.todo_admins 名单，与「是不是部门成员」无关。"""
         return bool(ident) and ident.get("name") in self._todo_admins()
 
-    def _uid(self):
+    def _session(self):
+        """返回 (open_id, 状态)。状态 ok/legacy/bad，见 session.verify。"""
         raw = self.headers.get("Cookie") or ""
+        value = ""
         for part in raw.split(";"):
             k, _, v = part.strip().partition("=")
-            if k == "uid":
-                return v.strip()
-        return ""
+            if k == session.COOKIE_NAME:
+                value = v.strip()
+                break
+        return session.verify(value)
+
+    def _uid(self):
+        """兼容旧调用点：只返回 open_id，没有或校验失败返回空串。"""
+        open_id, state = self._session()
+        return open_id if state in ("ok", "legacy") else ""
+
+    def _secure_request(self):
+        return (self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
 
     MAX_BODY = 64 * 1024
 
