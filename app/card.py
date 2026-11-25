@@ -21,6 +21,20 @@ from datetime import datetime
 from . import attendance, config, db, tasks
 
 WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+# 模块底色：飞书没有 -50 的自定义色槽，只有固定语义 token；
+# 语义 token 在暗色模式会被映射成发闷的深棕/深墨绿，所以用 config.style.color
+# 显式给 dark_mode 一套低饱和深底（不是纯黑，纯黑在暗色里显得死）。
+# 若某端仍渲染发脏，把 USE_CUSTOM_DARK 置 False 即整体退回中性 grey-50。
+USE_CUSTOM_DARK = True
+
+THEME = {
+    "orange-50": {"light_mode": "#FFF7ED", "dark_mode": "#2E2418"},
+    "green-50":  {"light_mode": "#F0FDF4", "dark_mode": "#1C2A22"},
+    "blue-50":   {"light_mode": "#EFF6FF", "dark_mode": "#1C2533"},
+    "red-50":    {"light_mode": "#FEF2F2", "dark_mode": "#2E1F22"},
+    "grey-50":   {"light_mode": "#F5F6F8", "dark_mode": "#26272B"},
+}
 CARD_VERSION = "v1"
 BOARD_URL = "https://xbyyb.duckdns.org"
 
@@ -176,7 +190,8 @@ def _stat(value, label, color):
     }
 
 
-def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
+def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2,
+              right_auto=False):
     """模块内的一行：左边姓名加粗，右边地点/数量右对齐。
 
     为什么不用「姓名 · 地点、姓名 · 地点」这种拼串：
@@ -184,20 +199,29 @@ def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
         而且三行以上读的人要自己找分隔符。分栏是让组件做对齐。
     """
     right_md = f"<font color='{right_color}'>{right}</font>" if right_color else right
+    # 右侧「调休假」「12 件」这种短字段用 auto：把剩余宽度全留给姓名，
+    # 否则手机窄屏上姓名被挤成两行、右侧却空一大片
+    if right_auto:
+        left_col = {"tag": "column", "width": "weighted", "weight": 1,
+                    "vertical_align": "top",
+                    "elements": [{"tag": "markdown", "content": f"**{left}**"}]}
+        right_col = {"tag": "column", "width": "auto",
+                     "vertical_align": "top", "horizontal_align": "right",
+                     "elements": [{"tag": "markdown", "text_align": "right",
+                                   "content": right_md}]}
+    else:
+        left_col = {"tag": "column", "width": "weighted", "weight": weight_left,
+                    "vertical_align": "top",
+                    "elements": [{"tag": "markdown", "content": f"**{left}**"}]}
+        right_col = {"tag": "column", "width": "weighted", "weight": weight_right,
+                     "vertical_align": "top", "horizontal_align": "right",
+                     "elements": [{"tag": "markdown", "text_align": "right",
+                                   "content": right_md}]}
     return {
         "tag": "column_set",
         "flex_mode": "none",
         "horizontal_spacing": "small",
-        "columns": [
-            {"tag": "column", "width": "weighted", "weight": weight_left,
-             "vertical_align": "top",
-             "elements": [{"tag": "markdown", "content": f"**{left}**"}]},
-            {"tag": "column", "width": "weighted", "weight": weight_right,
-             "vertical_align": "top", "horizontal_align": "right",
-             # text_align 才是让文字贴右的属性；horizontal_align 只对齐子元素盒子
-             "elements": [{"tag": "markdown", "text_align": "right",
-                           "content": right_md}]},
-        ],
+        "columns": [left_col, right_col],
     }
 
 
@@ -286,18 +310,21 @@ def _modules(d):
     （逾期例外：零逾期时给一句浅灰提示，避免让人猜「是不是漏了」）。"""
     out = []
     if d["away_list"]:
-        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>")
+        # 地点普遍比姓名长，给地点更多宽度，减少折行次数
+        rows = [_cell_row(_esc(n, 20), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>",
+                          weight_left=2, weight_right=3)
                 for n, loc in d["away_list"][:8]]
         out.append(_module("出差人员", f"{d['away']} 人", "orange", rows, tint="orange-50"))
 
     if d["leave_list"]:
-        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 24) or '请假'}</font>")
+        rows = [_cell_row(_esc(n, 20), f"<font color='grey'>{_esc(loc, 24) or '请假'}</font>",
+                          right_auto=True)
                 for n, loc in d["leave_list"][:8]]
         out.append(_module("请假人员", f"{d['leave']} 人", "green", rows, tint="green-50"))
 
     if d["busy"]:
         total = sum(x[0] for x in d["busy"])
-        rows = [_cell_row(_esc(name, 12), f"**{doing} 件**")
+        rows = [_cell_row(_esc(name, 20), f"**{doing} 件**", right_auto=True)
                 for doing, _ov, name in d["busy"][:8]]
         out.append(_module("在办事项", f"{total} 件", "blue", rows, tint="blue-50"))
 
@@ -325,9 +352,10 @@ def build(day=None, now=None, data=None):
         {
             "tag": "column_set",
             "flex_mode": "none",
-            "horizontal_spacing": "default",
+            # 手机窄屏：default 间距会把四格挤到折行
+            "horizontal_spacing": "small",
             "columns": [
-                _stat(d["total"], "今日应到", "blue"),
+                _stat(d["total"], "应到", "blue"),
                 _stat(d["normal"], "在岗", "green"),
                 _stat(d["away"], "出差", "orange"),
                 _stat(d["leave"], "请假", "red"),
@@ -351,9 +379,13 @@ def build(day=None, now=None, data=None):
         "url": BOARD_URL,
     })
 
+    conf = {"update_multi": True}
+    if USE_CUSTOM_DARK:
+        conf["style"] = {"color": dict(THEME)}
+
     return {
         "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": conf,
         "header": {
             "title": {"tag": "plain_text",
                       "content": f"{_esc(d['department'], 20)} · 今日状态"},
