@@ -106,10 +106,12 @@ class CardTest(unittest.TestCase):
         cols = [e for e in els if e["tag"] == "column_set"][0]["columns"]
         self.assertEqual(4, len(cols))
         import re
-        labels = [re.search(r"size='12'>([^<]+)</font>", c["elements"][0]["content"]).group(1)
-                  for c in cols]
+        labels = [re.sub(r"<[^>]+>", "", c["elements"][1]["content"]) for c in cols]
         self.assertEqual(["今日应到", "在岗", "出差", "请假"], labels)
-        values = [c["elements"][0]["content"].split("**")[1] for c in cols]
+        values = [re.sub(r"<[^>]+>", "", c["elements"][0]["content"]) for c in cols]
+        # 数字必须是大号：heading-0 才有视觉层级
+        self.assertEqual("heading-0", cols[0]["elements"][0]["text_size"])
+        self.assertEqual("grey-50", cols[0]["background_style"])
         self.assertEqual(["5", "3", "1", "1"], values)   # 应到/在岗/出差/请假
 
     def _modules(self, card_json):
@@ -121,9 +123,10 @@ class CardTest(unittest.TestCase):
         """业务模块必须是独立容器 + 左右分栏，不是一串 markdown。"""
         self._seed()
         mods = self._modules(card.build())
-        # 四块底色统一极浅灰：飞书没有 50 号浅色，深色铺满会撞色
-        for m in mods:
-            self.assertEqual("grey", m["columns"][0]["background_style"])
+        # 四块用极浅色 tint（-50 号），彼此有区分但不刺眼
+        tints = [m["columns"][0]["background_style"] for m in mods]
+        for t in tints:
+            self.assertTrue(str(t).endswith("-50"), msg=t)
 
         # 零逾期时那块是单行 markdown，没有标题行，这里只找带标题行的模块
         titled = [m for m in mods if "columns" in m["columns"][0]["elements"][0]]
@@ -141,6 +144,11 @@ class CardTest(unittest.TestCase):
         self.assertEqual("right", first_row["columns"][1]["elements"][0]["text_align"])
         self.assertEqual("right",
                          inner[0]["columns"][1]["elements"][0]["text_align"])
+        # 徽标必须是原生胶囊，不是纯文字
+        self.assertIn("<text_tag", inner[0]["columns"][1]["elements"][0]["content"])
+        # 按钮实心蓝底白字
+        btns = [e for e in card.build()["body"]["elements"] if e["tag"] == "button"]
+        self.assertEqual("primary_filled", btns[0]["type"])
 
     def test_all_four_modules_when_data_present(self):
         """出差/请假/在办/逾期齐全时四块都在。"""
@@ -180,7 +188,7 @@ class CardTest(unittest.TestCase):
         c = card.build(data=d)
         blob = json.dumps(c, ensure_ascii=False)
         self.assertIn("负责人：", blob)
-        self.assertIn("size='28'", blob)            # 超大号数字
+        self.assertIn("heading-0", blob)            # 超大号数字
         self.assertIn("text_align", blob)
 
     def test_no_module_when_section_empty(self):

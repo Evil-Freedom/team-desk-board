@@ -165,15 +165,14 @@ def _stat(value, label, color):
         "weight": 1,
         "vertical_align": "top",
         # 参考卡片把统计数字放在浅色圆角块里，而不是裸数字漂浮在空白上
-        "background_style": "grey",
+        "background_style": "grey-50",
         "padding": "10px 4px 10px 4px",
-        "elements": [{
-            "tag": "markdown",
-            "text_align": "center",
-            "content": "".join([f"<font color='{color}' size='24'>**{value}**</font>",
-                                chr(10),
-                                f"<font color='grey' size='12'>{label}</font>"]),
-        }],
+        "elements": [
+            {"tag": "markdown", "text_align": "center", "text_size": "heading-0",
+             "content": f"<font color='{color}'>{value}</font>"},
+            {"tag": "markdown", "text_align": "center", "text_size": "notation",
+             "content": f"<font color='grey'>{label}</font>"},
+        ],
     }
 
 
@@ -202,7 +201,7 @@ def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
     }
 
 
-def _module(title, badge, color, rows):
+def _module(title, badge, color, rows, tint=None):
     """一个业务模块：浅色底容器 + 标题行（左标题 / 右徽标）+ 多行明细。
 
     每个模块自己是独立容器（column 带 background_style），
@@ -219,7 +218,7 @@ def _module(title, badge, color, rows):
             {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
              "horizontal_align": "right",
              "elements": [{"tag": "markdown", "text_align": "right",
-                           "content": f"<font color='{color}'>{badge}</font>"}]},
+                           "content": f"<text_tag color='{color}'>{badge}</text_tag>"}]},
         ],
     }
     return {
@@ -231,7 +230,7 @@ def _module(title, badge, color, rows):
             "weight": 1,
             # 只用极浅灰：飞书的 background_style 没有 50 号浅色，
             # 深橙/深绿铺满既刺眼又会让同色标题隐身
-            "background_style": "grey",
+            "background_style": tint or "grey-50",
             "padding": "10px 12px 10px 12px",
             "elements": [head, {"tag": "hr"}] + list(rows),
         }],
@@ -250,7 +249,7 @@ def _overdue_module(d):
     if not people:
         return {"tag": "column_set", "flex_mode": "none", "columns": [{
             "tag": "column", "width": "weighted", "weight": 1,
-            "background_style": "grey", "padding": "8px 12px 8px 12px",
+            "background_style": "green-50", "padding": "8px 12px 8px 12px",
             "elements": [{"tag": "markdown", "text_size": "notation",
                           "content": "<font color='grey'>逾期提醒　暂无逾期事项</font>"}],
         }]}
@@ -259,7 +258,7 @@ def _overdue_module(d):
     more = f" 等 {len(people)} 人" if len(people) > 3 else ""
     return {"tag": "column_set", "flex_mode": "none", "columns": [{
         "tag": "column", "width": "weighted", "weight": 1,
-        "background_style": "grey", "padding": pad,
+        "background_style": "red-50", "padding": pad,
         "elements": [{
             "tag": "column_set", "flex_mode": "none", "horizontal_spacing": "small",
             "columns": [
@@ -271,9 +270,9 @@ def _overdue_module(d):
                 {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
                  "horizontal_align": "right",
                  "elements": [{"tag": "markdown", "text_align": "right",
-                               "content": (f"<font color='red' size='28'>"
-                                           f"**{d['overdue_total']}**</font>"
-                                           f"<font color='red'> 件</font>")}]},
+                               "text_size": "heading-0",
+                               "content": (f"<font color='red'>{d['overdue_total']}</font>"
+                                           f"<font color='red' size='12'> 件</font>")}]},
             ],
         }],
     }]}
@@ -284,20 +283,20 @@ def _modules(d):
     （逾期例外：零逾期时给一句浅灰提示，避免让人猜「是不是漏了」）。"""
     out = []
     if d["away_list"]:
-        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 10) or '外出'}</font>")
+        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>")
                 for n, loc in d["away_list"][:8]]
-        out.append(_module("出差人员", f"{d['away']} 人", "orange", rows))
+        out.append(_module("出差人员", f"{d['away']} 人", "orange", rows, tint="orange-50"))
 
     if d["leave_list"]:
-        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 10) or '请假'}</font>")
+        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 24) or '请假'}</font>")
                 for n, loc in d["leave_list"][:8]]
-        out.append(_module("请假人员", f"{d['leave']} 人", "green", rows))
+        out.append(_module("请假人员", f"{d['leave']} 人", "green", rows, tint="green-50"))
 
     if d["busy"]:
         total = sum(x[0] for x in d["busy"])
         rows = [_cell_row(_esc(name, 12), f"**{doing} 件**")
                 for doing, _ov, name in d["busy"][:8]]
-        out.append(_module("在办事项", f"{total} 件", "blue", rows))
+        out.append(_module("在办事项", f"{total} 件", "blue", rows, tint="blue-50"))
 
     out.append(_overdue_module(d))
     return out
@@ -344,7 +343,7 @@ def build(day=None, now=None, data=None):
     elements.append({
         "tag": "button",
         "text": {"tag": "plain_text", "content": "打开运营部在线看板"},
-        "type": "primary",
+        "type": "primary_filled",
         "width": "fill",
         "url": BOARD_URL,
     })
