@@ -150,5 +150,29 @@ class DigestIdempotencyTest(Base):
         self.assertFalse(digest.due_now())
 
 
+    def test_fallback_creates_run_after_target(self):
+        """没有设备事件时，到点也要自建 run，否则当天整日无日报。"""
+        from datetime import datetime
+        day = datetime(2026, 11, 26, 8, 55)
+        self.assertIsNone(morning.get_run("2026-11-26"))
+        run = morning.ensure_fallback(now=day)
+        self.assertIsNotNone(run)
+        self.assertEqual("fallback", run["trigger_source"])
+
+    def test_no_fallback_before_target(self):
+        from datetime import datetime
+        self.assertIsNone(morning.ensure_fallback(now=datetime(2026, 11, 26, 8, 10)))
+        self.assertIsNone(morning.get_run("2026-11-26"))
+
+    def test_fallback_does_not_duplicate(self):
+        from datetime import datetime
+        morning.ensure_fallback(now=datetime(2026, 11, 26, 9, 0))
+        self.assertIsNone(morning.ensure_fallback(now=datetime(2026, 11, 26, 9, 10)))
+        with db.session() as conn:
+            n = conn.execute("SELECT COUNT(*) c FROM morning_runs "
+                             "WHERE business_date='2026-11-26'").fetchone()["c"]
+        self.assertEqual(1, n)
+
+
 if __name__ == "__main__":
     unittest.main()

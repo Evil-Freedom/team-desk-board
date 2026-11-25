@@ -165,6 +165,26 @@ def run_once(run, now=None):
         return {"ok": bool(sent.get("ok")), "attendance": att, "digest": sent}
 
 
+def ensure_fallback(now=None):
+    """到点仍没有 run 时自建一个。
+
+    为什么需要：run 只由设备上报事件创建。如果某天没人上报（手机没开机、
+    没打卡、家里网络断了），当天就会**一条日报都没有**，而且没有任何告警——
+    看板看起来正常，群里却整天没动静。日报是固定节奏，不能依赖外部事件。
+    """
+    now = now or datetime.now()
+    day = attendance.today(now)
+    if get_run(day):
+        return None
+    h, m = _parse_hhmm(config.load().get("morning_target") or DEFAULT_TARGET, DEFAULT_TARGET)
+    target = datetime.combine(now.date(), datetime.min.time()).replace(hour=h, minute=m)
+    if now < target:
+        return None
+    run = plan(trigger_source="fallback", now=now)
+    db.log(True, "scheduler", f"{day} 到点无设备事件，已自建兜底统采")
+    return run
+
+
 def tick(now=None):
     """调度器每秒/每分钟调用：到点就跑，跑完就再也不动。
 
@@ -173,6 +193,9 @@ def tick(now=None):
       2) 到点未跑 → 跑；
       3) 失败且还在重试窗口 → 再跑一次（attempt 自增，最多 len(RETRY_MINUTES) 次）。
     """
+    # 先兜底：没有任何 run 时自建，避免"今天没人上报所以没日报"
+    ensure_fallback(now)
+
     run = due(now)
     if not run:
         return None
