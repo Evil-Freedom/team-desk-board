@@ -207,13 +207,17 @@ def _todo_md(d):
     return line
 
 
-def build(day=None, now=None):
+def build(day=None, now=None, data=None):
     """构造卡片：四列人数 → 明细 → 在办 → 入口按钮。
+
+    data 可注入预先收集好的统计（预览不同状态、写测试用），
+    不传则现场读库。
+    
 
     刻意不放「数据更新于 xx:xx · 口径…」那种脚注：
     群里没人靠它做判断，占一行反而把正文挤掉。时间放在副标题就够。
     """
-    d = collect(day, now)
+    d = data or collect(day, now)
     subtitle = f"{d['date']} {d['weekday']} · 更新 {d['updated']} · {_status_text(d)}"
 
     elements = [
@@ -263,8 +267,8 @@ def build(day=None, now=None):
     }
 
 
-def build_text(day=None, now=None):
+def build_text(day=None, now=None, data=None):
     """纯文本兜底：卡片发送失败时至少让群里看到同样的话。"""
-    d = collect(day, now)
+    d = data or collect(day, now)
     head = f"【{d['department']} · 今日状态】"
     return "\n".join([head] + legacy_lines(d) + [BOARD_URL])
