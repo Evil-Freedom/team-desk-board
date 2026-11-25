@@ -27,6 +27,55 @@ def _token():
         return None, f"取 token 失败：{e}"
 
 
+def _post(receive_id, receive_id_type, msg_type, content_obj):
+    """统一的发消息入口。content_obj 是 dict（text 用 {"text":...}，卡片用卡片 JSON）。"""
+    token, err = _token()
+    if err:
+        return False, err, None
+
+    body = json.dumps({
+        "receive_id": receive_id,
+        "msg_type": msg_type,
+        "content": json.dumps(content_obj, ensure_ascii=False),
+    }, ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{BASE}?receive_id_type={receive_id_type}",
+        data=body,
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+        if payload.get("code") == 0:
+            return True, None, ((payload.get("data") or {}).get("message_id") or None)
+        return False, payload.get("msg"), None
+    except urllib.error.HTTPError as e:
+        # 飞书的 400 会在 body 里写清哪个字段不合法（如 "unknown property: xxx"），
+        # 只回 "HTTPError 400" 等于把最有用的信息丢掉
+        try:
+            detail = e.read().decode("utf-8", "replace")
+            payload = json.loads(detail)
+            msg = payload.get("msg") or detail
+            ext = ((payload.get("error") or {}).get("ext") or "")
+            return False, f"HTTP {e.code}: {msg} {ext}"[:300], None
+        except Exception:
+            return False, f"HTTP {e.code}", None
+    except Exception as e:
+        return False, repr(e)[:200], None
+
+
+def send_card(chat_id, card):
+    """发交互式卡片（msg_type=interactive）。返回 (ok, err, message_id)。"""
+    return _post(chat_id, "chat_id", "interactive", card)
+
+
+def send_card_to(open_id, card):
+    """发给个人（用于上线前的私聊试发，不打扰群）。"""
+    return _post(open_id, "open_id", "interactive", card)
+
+
 def _send_ex(receive_id, receive_id_type, text):
     """发送消息，返回 (ok, err, message_id)。
 

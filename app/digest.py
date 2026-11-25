@@ -10,7 +10,7 @@ import time
 import os
 from datetime import datetime
 
-from . import attendance, config, db, notify, tasks
+from . import attendance, card, config, db, notify, tasks
 
 HOUR_DEFAULT = 9
 
