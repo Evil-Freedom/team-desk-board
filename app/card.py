@@ -195,7 +195,9 @@ def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
              "elements": [{"tag": "markdown", "content": f"**{left}**"}]},
             {"tag": "column", "width": "weighted", "weight": weight_right,
              "vertical_align": "center", "horizontal_align": "right",
-             "elements": [{"tag": "markdown", "content": right_md}]},
+             # text_align 才是让文字贴右的属性；horizontal_align 只对齐子元素盒子
+             "elements": [{"tag": "markdown", "text_align": "right",
+                           "content": right_md}]},
         ],
     }
 
@@ -216,7 +218,7 @@ def _module(title, badge, color, rows):
                            "content": f"<font color='{color}'>**{title}**</font>"}]},
             {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
              "horizontal_align": "right",
-             "elements": [{"tag": "markdown",
+             "elements": [{"tag": "markdown", "text_align": "right",
                            "content": f"<font color='{color}'>{badge}</font>"}]},
         ],
     }
@@ -227,36 +229,77 @@ def _module(title, badge, color, rows):
             "tag": "column",
             "width": "weighted",
             "weight": 1,
-            "background_style": color,
-            "padding": "8px 10px 8px 10px",
+            # 只用极浅灰：飞书的 background_style 没有 50 号浅色，
+            # 深橙/深绿铺满既刺眼又会让同色标题隐身
+            "background_style": "grey",
+            "padding": "10px 12px 10px 12px",
             "elements": [head, {"tag": "hr"}] + list(rows),
         }],
     }
 
 
+def _overdue_module(d):
+    """逾期提醒单独一块：左侧标题 + 负责人，右侧超大红色数字。
+
+    不做成和「在办事项」一样的列表——同一批人在两块里各出现一次，
+    看起来像数据重复；这里只回答「今天有几件逾期、谁背的」。
+    """
+    people = [(n, v) for _doing, v, n in d["busy"] if v]
+    pad = "10px 12px 10px 12px"
+
+    if not people:
+        return {"tag": "column_set", "flex_mode": "none", "columns": [{
+            "tag": "column", "width": "weighted", "weight": 1,
+            "background_style": "grey", "padding": "8px 12px 8px 12px",
+            "elements": [{"tag": "markdown", "text_size": "notation",
+                          "content": "<font color='grey'>逾期提醒　暂无逾期事项</font>"}],
+        }]}
+
+    names = "、".join(_esc(n, 10) for n, _v in people[:3])
+    more = f" 等 {len(people)} 人" if len(people) > 3 else ""
+    return {"tag": "column_set", "flex_mode": "none", "columns": [{
+        "tag": "column", "width": "weighted", "weight": 1,
+        "background_style": "grey", "padding": pad,
+        "elements": [{
+            "tag": "column_set", "flex_mode": "none", "horizontal_spacing": "small",
+            "columns": [
+                {"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center",
+                 "elements": [{"tag": "markdown", "content": chr(10).join([
+                     "<font color='red'>**逾期提醒**</font>",
+                     f"<font color='grey'>负责人：{names}{more}</font>",
+                 ])}]},
+                {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
+                 "horizontal_align": "right",
+                 "elements": [{"tag": "markdown", "text_align": "right",
+                               "content": (f"<font color='red' size='28'>"
+                                           f"**{d['overdue_total']}**</font>"
+                                           f"<font color='red'> 件</font>")}]},
+            ],
+        }],
+    }]}
+
+
 def _modules(d):
-    """四个业务模块：出差 / 请假 / 在办 / 逾期。没有内容的模块整块不出现。"""
+    """四个业务模块：出差 / 请假 / 在办 / 逾期。没有内容的模块整块不出现
+    （逾期例外：零逾期时给一句浅灰提示，避免让人猜「是不是漏了」）。"""
     out = []
     if d["away_list"]:
-        rows = [_cell_row(_esc(n, 12), _esc(loc, 10) or "外出")
+        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 10) or '外出'}</font>")
                 for n, loc in d["away_list"][:8]]
         out.append(_module("出差人员", f"{d['away']} 人", "orange", rows))
 
     if d["leave_list"]:
-        rows = [_cell_row(_esc(n, 12), _esc(loc, 10) or "请假")
+        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 10) or '请假'}</font>")
                 for n, loc in d["leave_list"][:8]]
         out.append(_module("请假人员", f"{d['leave']} 人", "green", rows))
 
     if d["busy"]:
         total = sum(x[0] for x in d["busy"])
-        rows = [_cell_row(_esc(name, 12), f"{doing} 件")
+        rows = [_cell_row(_esc(name, 12), f"**{doing} 件**")
                 for doing, _ov, name in d["busy"][:8]]
         out.append(_module("在办事项", f"{total} 件", "blue", rows))
 
-    overdue = [(name, ov) for _doing, ov, name in d["busy"] if ov]
-    if overdue:
-        rows = [_cell_row(_esc(n, 12), f"{v} 件", "red") for n, v in overdue[:8]]
-        out.append(_module("逾期提醒", f"{d['overdue_total']} 件", "red", rows))
+    out.append(_overdue_module(d))
     return out
 
 

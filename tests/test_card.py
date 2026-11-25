@@ -112,28 +112,38 @@ class CardTest(unittest.TestCase):
         values = [c["elements"][0]["content"].split("**")[1] for c in cols]
         self.assertEqual(["5", "3", "1", "1"], values)   # 应到/在岗/出差/请假
 
-    def test_modules_are_structured_containers(self):
-        """四块业务模块必须是独立容器 + 左右分栏，不是一串 markdown。"""
-        self._seed()
-        els = card.build()["body"]["elements"]
-        mods = [e for e in els if e["tag"] == "column_set" and len(e["columns"]) == 1
-                and e["columns"][0].get("background_style") not in (None, "grey")]
-        # 这份测试数据没有待办，所以在办/逾期两块不出现
-        self.assertEqual(["orange", "green"],
-                         [m["columns"][0]["background_style"] for m in mods])
+    def _modules(self, card_json):
+        """取出所有「单列 column_set」= 业务模块容器。"""
+        return [e for e in card_json["body"]["elements"]
+                if e["tag"] == "column_set" and len(e["columns"]) == 1]
 
-        # 模块内：第 0 个是标题行（左右两栏），第 1 个是分割线，之后每行两栏
-        inner = mods[0]["columns"][0]["elements"]
-        self.assertEqual("column_set", inner[0]["tag"])
-        self.assertEqual(2, len(inner[0]["columns"]))
-        self.assertEqual("hr", inner[1]["tag"])
+    def test_modules_are_structured_containers(self):
+        """业务模块必须是独立容器 + 左右分栏，不是一串 markdown。"""
+        self._seed()
+        mods = self._modules(card.build())
+        # 四块底色统一极浅灰：飞书没有 50 号浅色，深色铺满会撞色
+        for m in mods:
+            self.assertEqual("grey", m["columns"][0]["background_style"])
+
+        # 零逾期时那块是单行 markdown，没有标题行，这里只找带标题行的模块
+        titled = [m for m in mods if "columns" in m["columns"][0]["elements"][0]]
+        away = [m for m in titled
+                if "出差人员" in m["columns"][0]["elements"][0]["columns"][0]
+                ["elements"][0]["content"]][0]
+        inner = away["columns"][0]["elements"]
+        self.assertEqual("column_set", inner[0]["tag"])   # 标题行
+        self.assertEqual(2, len(inner[0]["columns"]))     # 左标题 / 右徽标
+        self.assertEqual("hr", inner[1]["tag"])           # 细分割线
         first_row = inner[2]
         self.assertEqual(2, len(first_row["columns"]))
-        self.assertIn("**", first_row["columns"][0]["elements"][0]["content"])  # 姓名加粗
-        self.assertEqual("right", first_row["columns"][1]["horizontal_align"])  # 地点右对齐
+        self.assertIn("**", first_row["columns"][0]["elements"][0]["content"])
+        # 右对齐必须落在 markdown 的 text_align 上，光设 column 不生效
+        self.assertEqual("right", first_row["columns"][1]["elements"][0]["text_align"])
+        self.assertEqual("right",
+                         inner[0]["columns"][1]["elements"][0]["text_align"])
 
     def test_all_four_modules_when_data_present(self):
-        """出差/请假/在办/逾期齐全时四块都在，颜色各异。"""
+        """出差/请假/在办/逾期齐全时四块都在。"""
         self._seed()
         import copy
         d = copy.deepcopy(card.collect())
@@ -141,16 +151,37 @@ class CardTest(unittest.TestCase):
                  away_list=[("瞿磊", "河北石家庄"), ("许海辉", "上海")],
                  leave_list=[("顾羽翛", "调休假")],
                  busy=[(6, 2, "王赵盼"), (3, 0, "张婕")], overdue_total=2)
-        els = card.build(data=d)["body"]["elements"]
-        colors = [e["columns"][0]["background_style"] for e in els
-                  if e["tag"] == "column_set" and len(e["columns"]) == 1]
-        self.assertEqual(["orange", "green", "blue", "red"], colors)
-        # 逾期模块的人数徽标必须是总量
-        red = [e for e in els if e["tag"] == "column_set"
-               and len(e["columns"]) == 1
-               and e["columns"][0].get("background_style") == "red"][0]
-        self.assertIn("2 件", red["columns"][0]["elements"][0]["columns"][1]
-                      ["elements"][0]["content"])
+        c = card.build(data=d)
+        blob = json.dumps(c, ensure_ascii=False)
+        for title in ("出差人员", "请假人员", "在办事项", "逾期提醒"):
+            self.assertIn(title, blob)
+        self.assertEqual(4, len(self._modules(c)))
+
+    def test_overdue_zero_shows_quiet_hint(self):
+        """零逾期不显示红色警示，只给一句浅灰提示。"""
+        self._seed()
+        import copy
+        d = copy.deepcopy(card.collect())
+        d.update(total=5, normal=3, away=1, leave=1,
+                 away_list=[("x", "上海")], leave_list=[("y", "年假")],
+                 busy=[(3, 0, "王赵盼")], overdue_total=0)
+        c = card.build(data=d)
+        blob = json.dumps(c, ensure_ascii=False)
+        self.assertIn("暂无逾期事项", blob)
+        self.assertNotIn("逾期提醒</font>", blob)   # 没有红色标题
+
+    def test_overdue_shows_big_red_number(self):
+        self._seed()
+        import copy
+        d = copy.deepcopy(card.collect())
+        d.update(total=5, normal=3, away=1, leave=1,
+                 away_list=[("x", "上海")], leave_list=[("y", "年假")],
+                 busy=[(6, 2, "王赵盼")], overdue_total=2)
+        c = card.build(data=d)
+        blob = json.dumps(c, ensure_ascii=False)
+        self.assertIn("负责人：", blob)
+        self.assertIn("size='28'", blob)            # 超大号数字
+        self.assertIn("text_align", blob)
 
     def test_no_module_when_section_empty(self):
         """没有出差/请假时，对应模块整块不出现（不留空容器）。"""
