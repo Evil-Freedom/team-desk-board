@@ -11,7 +11,9 @@ import time
 from contextlib import contextmanager
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATH = os.path.join(BASE, "board.db")
+# VPS 上代码目录只读（root 拥有），数据库必须落在可写的数据目录，
+# 所以路径允许用环境变量覆盖；本地不设变量时行为与以前完全一致。
+PATH = os.environ.get("BOARD_DB") or os.path.join(BASE, "board.db")
 
 SCHEMA = [
     """
@@ -70,6 +72,68 @@ SCHEMA = [
         last_sync_at      INTEGER,
         scope             TEXT
     )""",
+    # ── 统一考勤采集（2026-11-25 新增） ─────────────────────────────
+    # 为什么单独建表而不往 members 上加列：
+    #   1) members.status 的语义是「审批推导出的在不在岗」，考勤是另一条事实来源，
+    #      混在一列里会让「休假但打了卡」「出差但有记录」这类正常情况无解；
+    #   2) 历史考勤要按天留存，members 是每人一行。
+    # 只存业务需要的字段：不落照片 URL、Wi-Fi、经纬度——那些属于个人隐私，看板用不上。
+    """
+    CREATE TABLE IF NOT EXISTS attendance_records (
+        attendance_date     TEXT NOT NULL,          -- YYYY-MM-DD（Asia/Shanghai）
+        employee_no         TEXT NOT NULL,          -- 稳定员工标识，不是姓名
+        open_id             TEXT,
+        check_in_record_id  TEXT,
+        check_in_result     TEXT,
+        check_in_time       INTEGER,
+        check_out_record_id TEXT,
+        check_out_result    TEXT,
+        check_out_time      INTEGER,
+        fetched_at          INTEGER,
+        source              TEXT,                   -- bot / user / manual
+        run_id              TEXT,
+        PRIMARY KEY (attendance_date, employee_no)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_att_open ON attendance_records(open_id, attendance_date)",
+    "CREATE INDEX IF NOT EXISTS idx_att_record ON attendance_records(check_in_record_id)",
+    """
+    CREATE TABLE IF NOT EXISTS attendance_sync_log (
+        id       INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts       INTEGER,
+        run_id   TEXT,
+        ok       INTEGER,
+        scope    TEXT,
+        message  TEXT
+    )""",
+    # 同一业务日期只允许一条 run：单日一次成功推送靠 PRIMARY KEY 兜底，
+    # 不依赖「先查再插」这种竞态写法。
+    """
+    CREATE TABLE IF NOT EXISTS morning_runs (
+        business_date         TEXT PRIMARY KEY,
+        run_id                TEXT NOT NULL UNIQUE,
+        trigger_source        TEXT,
+        trigger_at            INTEGER,   -- 收到待核验任务的时间
+        scheduled_at          INTEGER,   -- 动态算出的统一采集时刻
+        started_at            INTEGER,
+        completed_at          INTEGER,
+        attempt               INTEGER DEFAULT 0,
+        attendance_sync_status TEXT,     -- ok | partial | failed | skipped
+        board_sync_status      TEXT,
+        digest_status          TEXT,     -- pending | sent | failed | skipped
+        quicklaunch_status     TEXT,
+        digest_sent_at         INTEGER,
+        note                   TEXT
+    )""",
+    # open_id ↔ employee_no 映射。当前应用缺 contact:user.employee_id:readonly，
+    # 这张表暂时为空、采集自动降级为「本人」。权限批下来后由 sync_identity() 自动回填。
+    """
+    CREATE TABLE IF NOT EXISTS attendance_identity (
+        open_id     TEXT PRIMARY KEY,
+        employee_no TEXT NOT NULL,
+        source      TEXT,
+        updated_at  INTEGER
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_att_identity_no ON attendance_identity(employee_no)",
 ]
 
 

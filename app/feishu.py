@@ -55,7 +55,16 @@ def _write_tmp(payload):
 
 
 def call(method, path, params=None, body=None, as_=None):
-    args = ["api", method, path]
+    return cli(["api", method, path], params=params, body=body, as_=as_)
+
+
+def cli(command, params=None, body=None, as_=None):
+    """执行任意 lark-cli 子命令（含专用子命令如 attendance），返回 (data, error)。
+
+    参数一律走临时文件：中文、引号、空格在 Windows 命令行里会被拆错，
+    而 --params/--data 支持 @file，是最省心的做法。
+    """
+    args = list(command)
     tmps = []
 
     if params:
@@ -160,17 +169,33 @@ class Tenant:
             return tok
 
     def get(self, path, params=None):
+        url = BASE + path
+        if params:
+            url += "?" + urllib.parse.urlencode(
+                {k: v for k, v in params.items() if v not in (None, "")})
+        return self._request(url, method="GET")
+
+    def post(self, path, body=None, params=None):
+        """写操作用：考勤查询、多维表格写回都走这个。"""
+        url = BASE + path
+        if params:
+            url += "?" + urllib.parse.urlencode(
+                {k: v for k, v in params.items() if v not in (None, "")})
+        return self._request(url, method="POST", body=body)
+
+    def _request(self, url, method="GET", body=None):
         try:
             tok = self.token()
         except Exception as e:
             return None, f"获取应用凭证失败：{e}"
 
-        url = BASE + path
-        if params:
-            url += "?" + urllib.parse.urlencode(
-                {k: v for k, v in params.items() if v not in (None, "")})
+        data = None
+        headers = {"Authorization": f"Bearer {tok}"}
+        if body is not None:
+            data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
 
-        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tok}"})
+        req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=25) as r:
                 payload = json.loads(r.read().decode("utf-8"))
@@ -234,3 +259,63 @@ def identity():
     if err or not data:
         return None, err
     return data.get("data") or data, None
+
+
+# ------------------------------------------------------------------ 考勤
+def app(path, params=None, body=None, method="GET"):
+    """应用身份直连 OpenAPI。
+
+    为什么不用 lark-cli：
+        CLI 的凭据存在系统 keyring 里，跟着用户走，没法安全地给第二个服务用；
+        而看板本来就有 app_id/app_secret。直连以后 VPS 不需要任何 CLI 配置，
+        部署从「复制凭据」变成「读一个配置文件」。
+    """
+    from . import config as _config
+
+    conf = _config.load()
+    aid, secret = conf.get("app_id"), conf.get("app_secret")
+    if not aid or not secret:
+        return None, "缺少应用凭证"
+    client = tenant(aid, secret)
+    if method.upper() == "POST":
+        return client.post(path, body=body, params=params)
+    return client.get(path, params=params)
+
+
+def attendance_by_app(employee_nos, day):
+    """应用身份按工号批量查（真正的全员采集，需 contact:user.employee_id:readonly）。"""
+    d = int(str(day).replace("-", ""))
+    return app("/open-apis/attendance/v1/user_tasks/query",
+               params={"employee_type": "employee_no"},
+               body={"user_ids": list(employee_nos or []),
+                     "check_date_from": d, "check_date_to": d},
+               method="POST")
+
+
+def attendance_by_user(access_token, day):
+    """用户身份查本人：飞书只返回 token 持有者的记录。
+
+    这条路径不需要管理员批任何东西——每个人授权时就同意了，属于自助扩容。
+    """
+    d = int(str(day).replace("-", ""))
+    url = f"{BASE}/open-apis/attendance/v1/user_tasks/query?employee_type=employee_no"
+    body = json.dumps({"user_ids": [], "check_date_from": d,
+                       "check_date_to": d}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, method="POST",
+        headers={"Authorization": f"Bearer {access_token}",
+                 "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            payload = json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return None, f"HTTP {e.code}"
+    except Exception as e:
+        return None, repr(e)[:300]
+
+    if payload.get("code") != 0:
+        return None, f"{payload.get('msg') or '接口失败'} (code={payload.get('code')})"
+    return payload.get("data") or {}, None

@@ -107,12 +107,18 @@ def update_status(todo_id, status):
     label = "已完成" if status == DONE else "未开始"
     body = {"records": [{"record_id": rid, "fields": {"状态": label}}]}
 
-    _, err = feishu.run([
-        "base", "+record-batch-update",
-        "--base-token", base_token,
-        "--table-id", table_id,
-        "--json", json.dumps(body, ensure_ascii=False),
-    ], as_="user")
+    # 优先走原生接口：VPS 上没有 lark-cli 凭据（存在 keyring 里，跨用户拿不走）。
+    # CLI 作为本地兜底，两条路都失败才记日志。
+    _, err = feishu.app(
+        f"/open-apis/bitable/v1/apps/{base_token}/tables/{table_id}/records/batch_update",
+        body=body, method="POST")
+    if err:
+        _, err = feishu.run([
+            "base", "+record-batch-update",
+            "--base-token", base_token,
+            "--table-id", table_id,
+            "--json", json.dumps(body, ensure_ascii=False),
+        ], as_="user")
 
     if err:
         # 写回失败不算致命：本地已经改了，用户当轮就看到效果，
@@ -120,6 +126,37 @@ def update_status(todo_id, status):
         db.log(False, "bitable", f"状态写回失败 {rid}: {str(err)[:100]}")
         return False
     return True
+
+
+def _fetch_http(base_token, table_id):
+    """原生接口取全表，返回 (fields, matrix, ids)；出错返回 None（触发 CLI 兜底）。
+
+    原生返回 items=[{record_id, fields:{列名:值}}]，而后续解析用的是
+    「列名数组 + 二维数组」，这里做一次形状转换，避免改动已经稳定的解析逻辑。
+    """
+    items, page = [], None
+    while True:
+        params = {"page_size": 200}
+        if page:
+            params["page_token"] = page
+        data, err = feishu.app(
+            f"/open-apis/bitable/v1/apps/{base_token}/tables/{table_id}/records",
+            params=params)
+        if err:
+            db.log(False, "bitable", f"原生接口不可用，退回 CLI：{err}")
+            return None
+        items += data.get("items") or []
+        page = data.get("page_token")
+        if not data.get("has_more") or not page:
+            break
+
+    if not items:
+        return [], [], []      # 空表是合法结果，不该退回去跑 CLI
+
+    fields = list((items[0].get("fields") or {}).keys())
+    matrix = [[(it.get("fields") or {}).get(f) for f in fields] for it in items]
+    ids = [it.get("record_id") or "" for it in items]
+    return fields, matrix, ids
 
 
 def sync_records():
@@ -135,29 +172,35 @@ def sync_records():
     # JSON 格式下 --limit 上限是 200（不是 2000），超过就分页取。
     # 11 人的待办远到不了 200，但分页逻辑留着，免得以后加人再加代码。
     payload, matrix, ids, fields = {}, [], [], []
-    offset = 0
 
-    while True:
-        data, err = feishu.run(
-            ["base", "+record-list",
-             "--base-token", base_token,
-             "--table-id", table_id,
-             "--format", "json",
-             "--limit", "200",
-             "--offset", str(offset)],
-            as_="user")
-        if err:
-            db.log(False, "bitable", err)
-            return {"ok": False, "error": err}
+    # 先试原生接口（VPS 无 lark-cli 凭据时唯一可用路径），失败再退回 CLI。
+    http = _fetch_http(base_token, table_id)
+    if http is not None:
+        fields, matrix, ids = http
+    else:
+        offset = 0
 
-        payload = data or {}
-        fields = payload.get("fields") or fields
-        matrix += payload.get("data") or []
-        ids += payload.get("record_id_list") or []
+        while True:
+            data, err = feishu.run(
+                ["base", "+record-list",
+                 "--base-token", base_token,
+                 "--table-id", table_id,
+                 "--format", "json",
+                 "--limit", "200",
+                 "--offset", str(offset)],
+                as_="user")
+            if err:
+                db.log(False, "bitable", err)
+                return {"ok": False, "error": err}
 
-        if not payload.get("has_more"):
-            break
-        offset += 200
+            payload = data or {}
+            fields = payload.get("fields") or fields
+            matrix += payload.get("data") or []
+            ids += payload.get("record_id_list") or []
+
+            if not payload.get("has_more"):
+                break
+            offset += 200
 
     now = int(time.time())
     rows, skipped = [], 0

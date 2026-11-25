@@ -20,7 +20,8 @@ from http.server import ThreadingHTTPServer
 from app import api, db, scheduler
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-LOG = os.path.join(BASE, "logs", "server.log")
+# 日志目录同理：VPS 上写 /var/log/team-desk-board，本地仍是 ./logs
+LOG = os.environ.get("BOARD_LOG") or os.path.join(BASE, "logs", "server.log")
 
 
 def _log(msg):

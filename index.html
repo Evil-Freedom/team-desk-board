@@ -117,6 +117,16 @@
   }
 
   .foot{display:flex;align-items:center;gap:6px;margin-top:1px;padding:0 1px;flex-wrap:wrap}
+  /* 考勤行独立于审批徽章：审批说「在不在岗」，考勤说「有没有打卡」，
+     两件事分开显示，谁也覆盖不了谁 */
+  .att{display:block;margin-top:5px;padding:0 1px;font-size:11px;line-height:1.4;color:#7c8798}
+  .att span{white-space:nowrap}
+  .att[data-state="CHECKED_IN"]{color:#0e7c66}
+  .att[data-state="NOT_YET"]{color:#9a6b00}
+  .att[data-state="CHECKIN_PENDING"]{color:#7c8798}
+  .att[data-state="CHECKIN_UNKNOWN"]{color:#9aa5b5}
+  .att[data-state="ABSENT_CONFIRMED"]{color:#b42318}
+  .att[data-state="NOT_APPLICABLE"]{color:#9aa5b5}
   .badge{border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600;white-space:nowrap}
   .b-idle{color:var(--idle);background:var(--idle-bg)}
   .b-normal{color:var(--normal);background:var(--normal-bg)}
@@ -847,6 +857,26 @@ function metrics(m){
   return out;
 }
 
+function attLine(m){
+  /* 考勤状态行。后端没给 attendance 字段时返回空串——
+     老版本后端 + 新前端、新后端 + 老缓存页都要能跑，不能因为少个键就报错。
+     精确打卡时间只有负责人能拿到（后端已按角色过滤），这里不做任何推断。 */
+  const a = m.attendance;
+  if (!a || !a.state) return '';
+  const hm = a.check_in_hm ? `<span>${a.check_in_hm}</span>` : '';
+  const text = a.text || ATT_TEXT[a.state] || '';
+  return `<div class="att" data-state="${a.state}">考勤：<span>${text}</span>${hm ? ' · ' + hm : ''}</div>`;
+}
+
+const ATT_TEXT = {
+  CHECKED_IN: '已打卡',
+  NOT_YET: '待打卡',
+  CHECKIN_PENDING: '待同步',
+  CHECKIN_UNKNOWN: '结果未知',
+  ABSENT_CONFIRMED: '记录缺勤',
+  NOT_APPLICABLE: '今日不考核',
+};
+
 function memberCard(m, i){
   const lead = m.lead ? '<em>负责人</em>' : '';
   const un = m.synced === false ? ' unsynced' : '';
@@ -858,7 +888,7 @@ function memberCard(m, i){
       <span class="role">${m.role}</span>
     </div>
     <div class="scene" data-load="${load || 'normal'}">${scene(m, i)}</div>
-    <div class="foot">${badge(m)}${metrics(m)}</div>
+    <div class="foot">${badge(m)}${metrics(m)}</div>${attLine(m)}
   </article>`;
 }
 
@@ -1263,6 +1293,16 @@ function applyBoard(list, source){
 
     const foot = el.querySelector('.foot');
     if (foot) foot.innerHTML = badge(m) + metrics(m);
+
+    // 考勤行只替换文本节点，不重建卡片/SVG——重建会让人物动画从头播一遍
+    const attHtml = attLine(m);
+    const attEl = el.querySelector('.att');
+    if (attHtml){
+      if (attEl) attEl.outerHTML = attHtml;
+      else el.insertAdjacentHTML('beforeend', attHtml);
+    } else if (attEl){
+      attEl.remove();
+    }
   };
 
   rest.forEach(m => {
@@ -1325,6 +1365,9 @@ function mergeWithLocal(remote){
       overdue: r.overdue,
       lead: !!r.lead,
       species: r.species || m.species,
+      // 考勤字段必须跟着合并走：白名单式重建会把它丢掉，
+      // 表现为「明明采到了记录，卡片上却不显示」
+      attendance: r.attendance,
       synced: true
     };
   });

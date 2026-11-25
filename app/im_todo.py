@@ -175,7 +175,7 @@ def poll_commands():
         return 0, "未配置群（config.im_todo.chat_id）"
 
     now = int(time.time())
-    data, err = feishu.get(
+    data, err = feishu.app(
         "/open-apis/im/v1/messages",
         params={
             "container_id_type": "chat",

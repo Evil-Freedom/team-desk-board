@@ -11,19 +11,28 @@
 """
 import json
 import os
+import threading
 import time
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler
 
 from . import approvals as approvals_mod
+from . import attendance as attendance_mod
 from . import config, contacts, db, oauth, status
 from . import tasks as tasks_mod
 from . import bitable as bitable_mod
 from . import im_todo as im_todo_mod
 from . import digest as digest_mod
+from . import internal_auth
 from . import notify
+from . import morning
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 业务同步与晨间统采共用一把锁：
+# 两个线程同时跑 sync_all 会互相覆盖（todos 是整批覆盖写），
+# 也会把 contacts 的「删除不在名单里的人」跑成竞态。
+SYNC_LOCK = threading.Lock()
 
 
 def lan_hint():
@@ -39,7 +48,7 @@ def lan_hint():
         s.close()
 
 
-def board_payload():
+def board_payload(viewer=None):
     conf = config.load()
     lead_name = conf.get("bootstrap_lead") or ""
     species = conf.get("species") or {}
@@ -52,24 +61,54 @@ def board_payload():
     # 负责人排最前，其余按姓名，保证每次刷新顺序稳定
     rows.sort(key=lambda m: (0 if m["name"] == lead_name else 1, m["name"]))
 
+    # 考勤是独立于审批的第二事实来源：这里只贴状态，绝不回写 members.status
+    att_day = attendance_mod.today()
+    att_rows = attendance_mod.records_for_day(att_day)
+    att_scope = attendance_mod.identity_map()
+    is_admin = bool(viewer and viewer.get("name") in (conf.get("todo_admins") or []))
+
     members = []
     for m in rows:
+        oid = m["open_id"]
+        rec = att_rows.get(oid)
+        if rec:
+            st = attendance_mod.classify(rec, m.get("status"))
+        elif oid in att_scope:
+            # 在采集范围内但今天还没记录 —— 待同步，不是缺勤
+            st = attendance_mod.CHECKIN_PENDING
+        else:
+            # 不在采集范围（应用缺工号权限）：如实标未知，不能显示成「待打卡」
+            st = attendance_mod.CHECKIN_UNKNOWN
+
+        # 精确打卡时间只给负责人：普通成员看到的是「已打卡/待打卡」这种状态词，
+        # 拿不到别人几点几分到的公司。
+        precise = st == attendance_mod.CHECKED_IN and rec and is_admin
+        ct = rec.get("check_in_time") if rec else None
         members.append({
-            "open_id": m["open_id"],
+            "open_id": oid,
             "name": m["name"],
             "role": "成员",
             "status": m.get("status") or "normal",
-            "doing": (counts.get(m["open_id"]) or {}).get("doing", 0),
-            "overdue": (counts.get(m["open_id"]) or {}).get("overdue", 0),
+            "doing": (counts.get(oid) or {}).get("doing", 0),
+            "overdue": (counts.get(oid) or {}).get("overdue", 0),
             "scarf": m.get("scarf"),
             "loc": m.get("loc"),
             "lead": m["name"] == lead_name,
             "species": species.get(m["name"], "ape"),
             "synced": True,
+            # 向后兼容：老前端不认识这个键会忽略，新前端才渲染考勤行
+            "attendance": {
+                "state": st,
+                "text": attendance_mod.STATUS_TEXT.get(st, ""),
+                "check_in_time": ct if precise else None,
+                "check_in_hm": (time.strftime("%H:%M", time.localtime(ct))
+                                if precise and ct else None),
+            },
         })
 
     c_log = db.last_log("contacts") or {}
     a_log = db.last_log("approvals") or {}
+    att_log = attendance_mod.last_log() or {}
 
     return {
         "department": conf.get("department"),
@@ -81,6 +120,18 @@ def board_payload():
             "ok": bool(a_log.get("ok")),
             "message": a_log.get("message") or "尚未同步",
             "configured": bool(conf.get("approvals")),
+        },
+        "attendance": {
+            "date": att_day,
+            "scope": attendance_mod.current_mode(att_rows),
+            "scoped": len(att_rows),
+            "total": len(members),
+            "full": len(att_rows) >= len(members),
+            "synced": bool(att_log.get("ok")),
+            "message": att_log.get("message") or "尚未采集",
+            "ts": att_log.get("ts"),
+            "checked": sum(1 for x in members
+                           if x["attendance"]["state"] == attendance_mod.CHECKED_IN),
         },
     }
 
@@ -103,31 +154,38 @@ def health_payload():
     }
 
 
-def sync_all():
+def sync_all(with_attendance=False, run_id=None, day=None):
     """一次全量同步：人 → 审批 → 状态。顺序不能反，状态依赖前两步的结果。
 
     审批走「按人授权」：每个人授权一次，服务用他自己的 token 拉他自己的单据，
     汇总进同一张 absences 表。不需要管理员批 tenant 级权限。
     没有授权的人，退回应用身份尝试（若应用有权限则能覆盖全员）。
+
+    with_attendance=True 只由晨间统采传入：考勤是「一天一次」的重活，
+    5 分钟一轮的常规同步不该带它，否则等于每小时打 12 次考勤接口。
     """
-    c = contacts.sync_members()
+    with SYNC_LOCK:
+        c = contacts.sync_members()
 
-    # 审批同步：先试应用身份（一次拉全员），没权限再退回按人授权。
-    # 这样管理员一批准 approval:instance，下一轮自动切过去，不用改代码。
-    auth = approvals_mod.sync_absences()
-    if not auth.get("ok"):
-        auth["fallback"] = approvals_mod.sync_all_authorized()
-    t = tasks_mod.sync_all_authorized()
+        # 审批同步：先试应用身份（一次拉全员），没权限再退回按人授权。
+        # 这样管理员一批准 approval:instance，下一轮自动切过去，不用改代码。
+        auth = approvals_mod.sync_absences()
+        if not auth.get("ok"):
+            auth["fallback"] = approvals_mod.sync_all_authorized()
+        t = tasks_mod.sync_all_authorized()
 
-    # 另外两个待办源，各自独立：一个挂了不影响另一个。
-    #   bitable  一张共享表，负责人统筹用
-    #   im_todo  群里发 #待办 命令，随手记
-    bt = bitable_mod.sync_records()
-    im = im_todo_mod.poll_commands()
+        # 另外两个待办源，各自独立：一个挂了不影响另一个。
+        #   bitable  一张共享表，负责人统筹用
+        #   im_todo  群里发 #待办 命令，随手记
+        bt = bitable_mod.sync_records()
+        im = im_todo_mod.poll_commands()
 
-    changed = status.apply_all()
-    return {"contacts": c, "approvals": auth, "tasks": t,
-            "bitable": bt, "im_todo": im, "status_changed": changed}
+        att = attendance_mod.sync(day=day, run_id=run_id) if with_attendance else None
+
+        changed = status.apply_all()
+        return {"contacts": c, "approvals": auth, "tasks": t,
+                "bitable": bt, "im_todo": im, "status_changed": changed,
+                "attendance": att}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -199,7 +257,54 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(html)
 
     # 无需登录即可访问：登录流程本身，加上只允许本机调用的内部接口（各自在 handler 里校验来源）
-    OPEN_PATHS = {"/login", "/oauth/callback", "/api/health", "/api/digest", "/api/announce", "/demo"}
+    OPEN_PATHS = {"/login", "/oauth/callback", "/api/health", "/api/digest", "/api/announce",
+                  "/demo", "/internal/attendance/self"}
+
+    def _internal_self(self):
+        """QuickLaunch 取「本人」考勤证据。三条硬边界：
+
+        1) 只认服务间签名，不认 cookie、不认匿名；
+        2) device_id 必须先在 config.quicklaunch.device_bindings 登记过——
+           请求方改参数也读不到别人的记录，服务端不接受任何 open_id/employee_no 入参；
+        3) 只回当天一条。不给列表、不给历史、不给导出。
+        """
+        raw_path = self.path
+        ok, reason = internal_auth.verify(self.headers, "GET", raw_path)
+        if not ok:
+            db.log(False, "internal", f"拒绝内部请求：{reason}")
+            return self._json({"ok": False, "error": "unauthorized"}, 401)
+
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        device_id = (q.get("device_id") or [""])[0].strip()
+        day = (q.get("attendance_date") or [""])[0].strip() or attendance_mod.today()
+        if not device_id:
+            return self._json({"ok": False, "error": "缺少 device_id"}, 400)
+
+        bind = ((config.load().get("quicklaunch") or {}).get("device_bindings") or {})
+        open_id = bind.get(device_id)
+        if not open_id:
+            return self._json({"ok": False, "error": "device_not_bound"}, 403)
+
+        rec = attendance_mod.find_self(open_id=open_id, day=day)
+        if not rec:
+            # 还没采到：这是「待同步」，不是失败。调用方必须继续等，不许当缺勤
+            return self._json({"ok": True, "found": False, "attendance_date": day})
+
+        st = attendance_mod.classify(rec)
+        return self._json({
+            "ok": True,
+            "found": True,
+            "attendance_date": rec["attendance_date"],
+            "employee_no": rec["employee_no"],
+            "record_id": rec.get("check_in_record_id") or "",
+            "result": rec.get("check_in_result") or "",
+            "check_time": rec.get("check_in_time"),
+            "state": st,
+            "run_id": rec.get("run_id"),
+            "fetched_at": rec.get("fetched_at"),
+            "source": rec.get("source"),
+        })
+
 
     def _identity(self):
         """返回 (open_id, name, dept) 或 None。
@@ -314,7 +419,9 @@ class Handler(SimpleHTTPRequestHandler):
                     {"ok": False, "error": f"你不是{'/'.join(allow)}成员，无权访问"}, 403)
 
         if path == "/api/board":
-            return self._json(board_payload())
+            return self._json(board_payload(self._identity()))
+        if path == "/internal/attendance/self":
+            return self._internal_self()
         if path == "/api/absences":
             return self._json(absences_payload())
         if path == "/api/health":
@@ -368,6 +475,45 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"ok": False, "error": "not found"}, 404)
         return super().do_GET()
 
+    def _internal_plan(self):
+        """QuickLaunch 上报「今天第一个待核验任务」，用来登记晨间统采。
+
+        幂等：同一天无论上报多少次，morning.plan() 都只返回已有那条 run，
+        scheduled_at 也不会被后来的上报改晚（先到先算，后来者不该推迟全部门）。
+        """
+        n = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(n) if 0 < n <= self.MAX_BODY else b""
+        ok, reason = internal_auth.verify(self.headers, "POST", self.path, raw)
+        if not ok:
+            db.log(False, "internal", f"拒绝内部请求：{reason}")
+            return self._json({"ok": False, "error": "unauthorized"}, 401)
+
+        try:
+            body = json.loads(raw.decode("utf-8")) if raw else {}
+        except Exception:
+            return self._json({"ok": False, "error": "invalid_json"}, 400)
+
+        device_id = str(body.get("device_id") or "").strip()
+        bind = ((config.load().get("quicklaunch") or {}).get("device_bindings") or {})
+        if not device_id or device_id not in bind:
+            return self._json({"ok": False, "error": "device_not_bound"}, 403)
+
+        from datetime import datetime as _dt
+        ev_ts = int(body.get("event_time") or time.time())
+        ev_dt = _dt.fromtimestamp(ev_ts)
+        if attendance_mod.today(ev_dt) != attendance_mod.today():
+            # 跨天的迟到事件：不拿它去创建「昨天」的统采
+            ev_dt = _dt.now()
+
+        run = morning.plan(trigger_source=str(body.get("type") or "checkin_unknown"), now=ev_dt)
+        return self._json({
+            "ok": True,
+            "run_id": run["run_id"],
+            "business_date": run["business_date"],
+            "scheduled_at": run["scheduled_at"],
+            "already": bool(run.get("started_at")),
+        })
+
     def do_POST(self):
         """兜住所有未捕获异常。
 
@@ -385,6 +531,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def _do_post(self):
         path = self.path.split("?")[0]
+
+        # 内部接口要先拿原始 body 验签，不能走 _read_body（它会先把流读空）
+        if path == "/internal/morning/plan":
+            return self._internal_plan()
+
         if path not in self.OPEN_PATHS and not self._identity():
             return self._json({"ok": False, "error": "未登录"}, 401)
         body = self._read_body()

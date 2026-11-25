@@ -61,8 +61,8 @@ def _from_department(dept_id, identity):
         params = {"department_id": dept_id, "page_size": 50, "user_id_type": "open_id"}
         if page:
             params["page_token"] = page
-        data, err = feishu.get("/open-apis/contact/v3/users/find_by_department",
-                               params=params, as_=identity)
+        data, err = feishu.app("/open-apis/contact/v3/users/find_by_department",
+                              params=params)
         if err:
             return None, err
         for u in (data.get("items") or []):
@@ -92,8 +92,8 @@ def _from_chat(chat_id, identity="bot"):
         params = {"member_id_type": "open_id", "page_size": 100}
         if page:
             params["page_token"] = page
-        data, err = feishu.get(f"/open-apis/im/v1/chats/{chat_id}/members",
-                               params=params, as_=identity)
+        data, err = feishu.app(f"/open-apis/im/v1/chats/{chat_id}/members",
+                              params=params)
         if err:
             return None, err
         for u in (data.get("items") or []):
@@ -140,9 +140,8 @@ def _resolve_department_id(dept_name, identity="bot", max_depth=5):
             params = {"department_id_type": "open_department_id", "page_size": 50}
             if page:
                 params["page_token"] = page
-            data, err = feishu.get(
-                f"/open-apis/contact/v3/departments/{parent}/children",
-                params=params, as_=identity)
+            data, err = feishu.app(
+                f"/open-apis/contact/v3/departments/{parent}/children", params=params)
             if err:
                 return None, err
             for d in (data.get("items") or []):

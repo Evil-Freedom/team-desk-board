@@ -28,7 +28,8 @@ import os
 import threading
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PATH = os.path.join(BASE, "config.json")
+# 配置文件含凭据，生产上放在 /etc（600），不跟代码放一起
+PATH = os.environ.get("BOARD_CONFIG") or os.path.join(BASE, "config.json")
 
 DEFAULTS = {
     "department": "示例部门",
@@ -44,8 +45,20 @@ DEFAULTS = {
     "allow_departments": ["示例部门"],
     "notify_open_ids": [],   # 隧道地址变化时推送给这些人（open_id）
     "digest_chat_id": "",   # 每日摘要推送的群 chat_id
-    "digest_hour": 9,        # 几点推（24 小时制）   # 只允许这些部门访问；空列表 = 不限制
+    "digest_hour": 9,        # 已停用：日报改由晨间统采完成后触发（保留仅为兼容旧配置）
     "approvals": [],
+    # ── 晨间统采（2026-11-25） ───────────────────────────────────
+    # 目标采样时刻。真实触发还要求「当天收到过个人待核验事件」，
+    # 没有事件就不跑、也不发日报——不允许退回固定时间推送。
+    "morning_target": "08:50",
+    # 可选兜底：没有个人事件时的部门日报时间（HH:MM）。默认空 = 关闭。
+    # 打开后日志会标注 trigger_source=fallback，不会伪装成正常统采。
+    "digest_fallback_hour": "",
+    # QuickLaunch 设备 → 飞书 open_id 绑定。内部接口只认这里登记过的设备，
+    # 请求方无法通过传参读别人。格式：{"<device_id>": "ou_xxx"}
+    "quicklaunch": {"device_bindings": {}},
+    # 服务间共享密钥（HMAC）。优先读环境变量 QL_INTERNAL_TOKEN，这里仅作本地调试后备。
+    "internal_token": "",
 }
 
 _lock = threading.Lock()
