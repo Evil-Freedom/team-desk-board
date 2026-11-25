@@ -177,44 +177,87 @@ def _stat(value, label, color):
     }
 
 
-def _detail_md(d):
-    """明细块：出差 / 休假 各一行，带前置圆点，和上面的数字列区分开。
+def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
+    """模块内的一行：左边姓名加粗，右边地点/数量右对齐。
 
-    没有明细时不放空行——群里最怕一条只有标题和按钮的空卡片。
+    为什么不用「姓名 · 地点、姓名 · 地点」这种拼串：
+        纯文本里左右对齐只能靠全角空格凑，换个字体就散架，
+        而且三行以上读的人要自己找分隔符。分栏是让组件做对齐。
     """
-    segs = []
+    right_md = f"<font color='{right_color}'>{right}</font>" if right_color else right
+    return {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "small",
+        "columns": [
+            {"tag": "column", "width": "weighted", "weight": weight_left,
+             "vertical_align": "center",
+             "elements": [{"tag": "markdown", "content": f"**{left}**"}]},
+            {"tag": "column", "width": "weighted", "weight": weight_right,
+             "vertical_align": "center", "horizontal_align": "right",
+             "elements": [{"tag": "markdown", "content": right_md}]},
+        ],
+    }
+
+
+def _module(title, badge, color, rows):
+    """一个业务模块：浅色底容器 + 标题行（左标题 / 右徽标）+ 多行明细。
+
+    每个模块自己是独立容器（column 带 background_style），
+    这样四块在视觉上互相分开，而不是四行连着的文字。
+    """
+    head = {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "horizontal_spacing": "small",
+        "columns": [
+            {"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center",
+             "elements": [{"tag": "markdown",
+                           "content": f"<font color='{color}'>**{title}**</font>"}]},
+            {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
+             "horizontal_align": "right",
+             "elements": [{"tag": "markdown",
+                           "content": f"<font color='{color}'>{badge}</font>"}]},
+        ],
+    }
+    return {
+        "tag": "column_set",
+        "flex_mode": "none",
+        "columns": [{
+            "tag": "column",
+            "width": "weighted",
+            "weight": 1,
+            "background_style": color,
+            "padding": "8px 10px 8px 10px",
+            "elements": [head, {"tag": "hr"}] + list(rows),
+        }],
+    }
+
+
+def _modules(d):
+    """四个业务模块：出差 / 请假 / 在办 / 逾期。没有内容的模块整块不出现。"""
+    out = []
     if d["away_list"]:
-        items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
-                         for n, loc in d["away_list"][:8])
-        segs.append(f"<font color='orange'>**出差**</font>　{items}")
+        rows = [_cell_row(_esc(n, 12), _esc(loc, 10) or "外出")
+                for n, loc in d["away_list"][:8]]
+        out.append(_module("出差人员", f"{d['away']} 人", "orange", rows))
+
     if d["leave_list"]:
-        items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
-                         for n, loc in d["leave_list"][:8])
-        segs.append(f"<font color='red'>**休假**</font>　{items}")
-    return chr(10).join(segs)
+        rows = [_cell_row(_esc(n, 12), _esc(loc, 10) or "请假")
+                for n, loc in d["leave_list"][:8]]
+        out.append(_module("请假人员", f"{d['leave']} 人", "green", rows))
 
+    if d["busy"]:
+        total = sum(x[0] for x in d["busy"])
+        rows = [_cell_row(_esc(name, 12), f"{doing} 件")
+                for doing, _ov, name in d["busy"][:8]]
+        out.append(_module("在办事项", f"{total} 件", "blue", rows))
 
-def _todo_md(d):
-    """在办块：前 5 人，带件数；有逾期才补一句合计。"""
-    if not d["busy"]:
-        return "<font color='grey'>**在办**</font>　暂无记录"
-    shown = d["busy"][:5]
-    parts = []
-    for doing, overdue, name in shown:
-        seg = f"{_esc(name, 12)} {doing} 件"
-        if overdue:
-            seg += f"（逾期 {overdue}）"
-        parts.append(seg)
-    tail = f"　另有 {len(d['busy']) - len(shown)} 人有在办" if len(d["busy"]) > len(shown) else ""
-    line = "<font color='grey'>**在办**</font>　" + "、".join(parts) + tail
-    # 只报「逾期合计 2 件」看不出是谁拖的，落到人头上才有用
     overdue = [(name, ov) for _doing, ov, name in d["busy"] if ov]
     if overdue:
-        seg = "、".join(f"{_esc(n, 12)} {v} 件" for n, v in overdue[:3])
-        more = f" 等 {len(overdue)} 人" if len(overdue) > 3 else ""
-        line += chr(10) + (f"<font color='red'>**逾期**</font>　{seg}{more}"
-                           f"（合计 {d['overdue_total']} 件）")
-    return line
+        rows = [_cell_row(_esc(n, 12), f"{v} 件", "red") for n, v in overdue[:8]]
+        out.append(_module("逾期提醒", f"{d['overdue_total']} 件", "red", rows))
+    return out
 
 
 def build(day=None, now=None, data=None):
@@ -253,10 +296,7 @@ def build(day=None, now=None, data=None):
                          "content": "还没有同步到成员数据，请检查服务是否正常。",
                          "text_size": "notation"})
     else:
-        detail = _detail_md(d)
-        if detail:
-            elements.append({"tag": "markdown", "content": detail})
-        elements.append({"tag": "markdown", "content": _todo_md(d)})
+        elements += _modules(d)
 
     elements.append({
         "tag": "button",

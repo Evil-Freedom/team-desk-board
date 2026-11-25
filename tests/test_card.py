@@ -112,14 +112,57 @@ class CardTest(unittest.TestCase):
         values = [c["elements"][0]["content"].split("**")[1] for c in cols]
         self.assertEqual(["5", "3", "1", "1"], values)   # 应到/在岗/出差/请假
 
-    def test_detail_lines_list_people(self):
+    def test_modules_are_structured_containers(self):
+        """四块业务模块必须是独立容器 + 左右分栏，不是一串 markdown。"""
         self._seed()
-        blob = "".join(e.get("content", "") for e in card.build()["body"]["elements"]
-                       if e["tag"] == "markdown")
-        self.assertIn("出差", blob)
-        self.assertIn("休假", blob)
-        self.assertIn("赵六", blob)          # 请假的人出现在明细里
-        self.assertIn("在办", blob)
+        els = card.build()["body"]["elements"]
+        mods = [e for e in els if e["tag"] == "column_set" and len(e["columns"]) == 1
+                and e["columns"][0].get("background_style") not in (None, "grey")]
+        # 这份测试数据没有待办，所以在办/逾期两块不出现
+        self.assertEqual(["orange", "green"],
+                         [m["columns"][0]["background_style"] for m in mods])
+
+        # 模块内：第 0 个是标题行（左右两栏），第 1 个是分割线，之后每行两栏
+        inner = mods[0]["columns"][0]["elements"]
+        self.assertEqual("column_set", inner[0]["tag"])
+        self.assertEqual(2, len(inner[0]["columns"]))
+        self.assertEqual("hr", inner[1]["tag"])
+        first_row = inner[2]
+        self.assertEqual(2, len(first_row["columns"]))
+        self.assertIn("**", first_row["columns"][0]["elements"][0]["content"])  # 姓名加粗
+        self.assertEqual("right", first_row["columns"][1]["horizontal_align"])  # 地点右对齐
+
+    def test_all_four_modules_when_data_present(self):
+        """出差/请假/在办/逾期齐全时四块都在，颜色各异。"""
+        self._seed()
+        import copy
+        d = copy.deepcopy(card.collect())
+        d.update(total=11, normal=8, away=2, leave=1,
+                 away_list=[("瞿磊", "河北石家庄"), ("许海辉", "上海")],
+                 leave_list=[("顾羽翛", "调休假")],
+                 busy=[(6, 2, "王赵盼"), (3, 0, "张婕")], overdue_total=2)
+        els = card.build(data=d)["body"]["elements"]
+        colors = [e["columns"][0]["background_style"] for e in els
+                  if e["tag"] == "column_set" and len(e["columns"]) == 1]
+        self.assertEqual(["orange", "green", "blue", "red"], colors)
+        # 逾期模块的人数徽标必须是总量
+        red = [e for e in els if e["tag"] == "column_set"
+               and len(e["columns"]) == 1
+               and e["columns"][0].get("background_style") == "red"][0]
+        self.assertIn("2 件", red["columns"][0]["elements"][0]["columns"][1]
+                      ["elements"][0]["content"])
+
+    def test_no_module_when_section_empty(self):
+        """没有出差/请假时，对应模块整块不出现（不留空容器）。"""
+        with db.session() as conn:
+            for i in (1, 2):
+                conn.execute("INSERT INTO members (open_id,name,department,status) "
+                             "VALUES (?,?,?,?)", (f"ou_n{i}", f"人{i}", "运营部", "normal"))
+        els = card.build()["body"]["elements"]
+        colors = [e["columns"][0].get("background_style") for e in els
+                  if e["tag"] == "column_set" and len(e["columns"]) == 1]
+        self.assertNotIn("orange", colors)
+        self.assertNotIn("green", colors)
 
     def test_text_fallback_keeps_legacy_wording(self):
         """文本兜底仍是旧日报那几句（卡片发失败时群里看到的还是熟悉的样子）。"""
@@ -176,6 +219,60 @@ class CardTest(unittest.TestCase):
         text = json.dumps(card.build(), ensure_ascii=False)
         for bad in ("record_id", "check_in_time", "device_id", "ou_a", "X1"):
             self.assertNotIn(bad, text)
+
+
+class SendPathTest(unittest.TestCase):
+    """确保日报走卡片而不是纯文本——这条曾经静默失效过，
+    群里收到的还是老文本，而私聊试发一切正常，很难发现。"""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._db, self._cfg = db.PATH, config.PATH
+        db.PATH = os.path.join(self.tmp, "board.db")
+        config.PATH = os.path.join(self.tmp, "config.json")
+        db.init()
+        with open(config.PATH, "w", encoding="utf-8") as f:
+            json.dump({"digest_chat_id": "oc_test", "department": "运营部"}, f,
+                      ensure_ascii=False)
+        with db.session() as conn:
+            conn.execute("INSERT INTO members (open_id,name,department,status) "
+                         "VALUES ('ou_a','张三','运营部','normal')")
+            # _claim 依赖当天的 morning_runs 行（生产由 morning.plan 创建）
+            conn.execute("""INSERT INTO morning_runs
+                (business_date, run_id, attendance_sync_status, digest_status,
+                 completed_at) VALUES (?,?,?,?,?)""",
+                         (attendance.today(), "r1", "ok", "pending", 1))
+        from app import digest, notify
+        self.digest, self.notify = digest, notify
+        self.calls = []
+        self._card, self._text = notify.send_card, notify.send_to_chat
+
+        def fc(chat_id, card_json):
+            self.calls.append(("card", card_json.get("schema")))
+            return True, None, "om_card_1"
+
+        def ft(chat_id, text):
+            self.calls.append(("text", text[:20]))
+            return True, None
+
+        notify.send_card, notify.send_to_chat = fc, ft
+
+    def tearDown(self):
+        db.PATH, config.PATH = self._db, self._cfg
+        self.notify.send_card, self.notify.send_to_chat = self._card, self._text
+
+    def test_send_once_goes_through_card(self):
+        r = self.digest.send_once()
+        self.assertTrue(r["ok"], msg=str(r))
+        self.assertEqual("card", r["kind"])
+        self.assertEqual([("card", "2.0")], self.calls)   # 只发卡片，没发文本
+
+    def test_falls_back_to_text_when_card_rejected(self):
+        self.notify.send_card = lambda chat_id, c: (False, "invalid card", None)
+        r = self.digest.send_once()
+        self.assertTrue(r["ok"])
+        self.assertEqual("text", r["kind"])
+        self.assertEqual(["text"], [c[0] for c in self.calls])
 
 
 if __name__ == "__main__":

@@ -108,12 +108,25 @@ def send_once(business_date=None, run_id=None, text=None):
         _mark(day, "skipped")
         return {"ok": False, "error": "config.digest_chat_id 为空"}
 
-    body = text or build_text()
-    ok, err = notify.send_to_chat(chat_id, body)
+    # 卡片优先；卡片被飞书拒绝（结构不合法/客户端不认）才退纯文本。
+    # 这条分支必须存在：卡片挂了不代表今天就不该发日报。
+    d = card.collect()
+    ok, err, mid = notify.send_card(chat_id, card.build(data=d))
+    kind = "card"
+    if not ok:
+        db.log(False, "digest", f"卡片发送失败，回退文本：{err}")
+        ok, err = notify.send_to_chat(chat_id, card.build_text(data=d))
+        kind, mid = "text", None
+
     _mark(day, "sent" if ok else "failed")
+    cap = d["capability"]
+    diag = f"coverage={cap['scoped']}/{cap['total']} full={d['complete']} pending={d['pending']}"
+    summary = card.build_text(data=d).replace("\n", " | ")[:220]
     db.log(ok, "digest",
-           f"run={run_id or '-'} " + (body.replace("\n", " | ")[:260] if ok else f"发送失败：{err}"))
-    return {"ok": ok, "error": err, "text": body, "business_date": day}
+           f"run={run_id or '-'} type={kind} mid={mid or '-'} {diag} " +
+           (summary if ok else f"发送失败：{err}"))
+    return {"ok": ok, "error": err, "business_date": day, "kind": kind,
+            "message_id": mid}
 
 
 def send_daily(force=False):
