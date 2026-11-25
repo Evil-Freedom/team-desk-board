@@ -77,22 +77,31 @@ class CardTest(unittest.TestCase):
         self.assertIn("数据完整", card.build()["header"]["subtitle"]["content"])
 
     def test_pending_is_not_called_absent(self):
-        """待确认不能当缺勤统计——查不到 ≠ 没来上班。
+        """卡片正文不能出现缺勤/旷工——查不到 ≠ 没来上班。"""
+        self._seed()
+        text = json.dumps(card.build(), ensure_ascii=False)
+        self.assertNotIn("缺勤", text)
+        self.assertNotIn("旷工", text)
 
-        说明文字里可以出现「不代表缺勤」这种否定句，所以只检查
-        三个核心数字的标签，不粗暴地全文禁词。
-        """
+    def test_body_keeps_legacy_daily_wording(self):
+        """正文必须是旧日报那几句，不能换成另一套说法。"""
         self._seed()
         c = card.build()
-        cols = [e for e in c["body"]["elements"] if e["tag"] == "column_set"][0]["columns"]
-        labels = []
-        for col in cols:
-            for el in col["elements"]:
-                labels.append(el.get("content", ""))
-        blob = " ".join(labels)
-        self.assertNotIn("缺勤", blob)
-        self.assertNotIn("旷工", blob)
-        self.assertIn("待确认", blob)
+        body = c["body"]["elements"][0]["content"]
+        self.assertIn("在岗 3 人", body)      # 3 normal + 1 leave + 1 away
+        self.assertIn("休假 1", body)
+        self.assertIn("出差 1", body)
+        self.assertIn("休假：赵六", body)
+        self.assertIn("出差：", body)
+        self.assertIn("在办：", body)
+
+    def test_all_here_wording_when_no_absence(self):
+        with db.session() as conn:
+            for i in (1, 2):
+                conn.execute("INSERT INTO members (open_id,name,department,status) "
+                             "VALUES (?,?,?,?)", (f"ou_x{i}", f"人{i}", "运营部", "normal"))
+        body = card.build()["body"]["elements"][0]["content"]
+        self.assertIn("今天全员在岗", body)
 
     def test_special_chars_escaped(self):
         self._seed()
@@ -105,15 +114,14 @@ class CardTest(unittest.TestCase):
         c = card.build()
         self.assertEqual("2.0", c["schema"])
         self.assertEqual("plain_text", c["header"]["title"]["tag"])
+        self.assertIn("今日状态", c["header"]["title"]["content"])
         els = c["body"]["elements"]
-        cols = [e for e in els if e["tag"] == "column_set"]
-        self.assertEqual(1, len(cols))
-        self.assertEqual(3, len(cols[0]["columns"]))     # 三列核心统计
+        self.assertEqual("markdown", els[0]["tag"])       # 正文（旧日报文案）
         self.assertTrue(any(e["tag"] == "hr" for e in els))
         btns = [e for e in els if e["tag"] == "button"]
         self.assertEqual(1, len(btns))
         self.assertEqual("https://xbyyb.duckdns.org", btns[0]["url"])
-        self.assertEqual("fill", btns[0]["width"])       # 移动端铺满更好点
+        self.assertEqual("fill", btns[0]["width"])        # 移动端铺满更好点
 
     def test_card_is_json_serialisable(self):
         self._seed()
@@ -126,11 +134,16 @@ class CardTest(unittest.TestCase):
         c = card.build()
         self.assertIn("尚未同步", c["header"]["subtitle"]["content"])
 
-    def test_text_fallback_contains_url_and_numbers(self):
+    def test_text_fallback_matches_card_body(self):
+        """文本兜底必须和卡片正文说同样的话（同源 legacy_lines）。"""
         self._seed()
         t = card.build_text()
         self.assertIn("https://xbyyb.duckdns.org", t)
-        self.assertIn("应到 5", t)
+        self.assertIn("在岗 3 人", t)
+        body = card.build()["body"]["elements"][0]["content"]
+        for line in card.legacy_lines():
+            self.assertIn(line, body)
+            self.assertIn(line, t)
 
     def test_no_personal_evidence_in_card(self):
         """群里只给汇总：不出现 record_id、打卡时间、设备信息。"""

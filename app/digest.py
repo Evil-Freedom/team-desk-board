@@ -27,80 +27,12 @@ def _members():
 
 
 def build_text():
-    """生成摘要文本。数据不足时给出可读的说明，不返回空消息。"""
-    people = _members()
-    if not people:
-        return f"【{_dept()} · 今日状态】\n还没有同步到成员数据，请检查服务是否正常。"
+    """文本版日报。
 
-    counts = tasks.summary_by_person()
-
-    on_duty = [p for p in people if p["status"] not in ("away", "leave")]
-    away = [p for p in people if p["status"] == "away"]
-    leave = [p for p in people if p["status"] == "leave"]
-
-    head_parts = []
-    if not away and not leave:
-        head_parts.append("今天全员在岗")
-    else:
-        head_parts.append(f"在岗 {len(on_duty)} 人")
-        if away:
-            head_parts.append(f"出差 {len(away)}")
-        if leave:
-            head_parts.append(f"休假 {len(leave)}")
-
-    lines = [f"【{_dept()} · 今日状态】", " · ".join(head_parts)]
-
-    def detail(group, tag):
-        """休假行的 loc 是假期类型（年假/调休假），不是事由——事由在同步阶段已丢弃。"""
-        if not group:
-            return None
-        items = [f"{p['name']}·{p['loc']}" if p.get("loc") else p["name"] for p in group]
-        return f"{tag}：" + "、".join(items)
-
-    for g, tag in ((away, "出差"), (leave, "休假")):
-        line = detail(g, tag)
-        if line:
-            lines.append(line)
-
-    # 负载：只报有在办的，按件数降序，最多 5 个，避免刷屏
-    busy = []
-    for p in people:
-        c = counts.get(p["open_id"]) or {}
-        doing = c.get("doing") or 0
-        if doing:
-            busy.append((doing, c.get("overdue") or 0, p["name"]))
-    busy.sort(reverse=True)
-
-    if busy:
-        shown = busy[:5]
-        parts = []
-        for doing, overdue, name in shown:
-            seg = f"{name} {doing} 件"
-            if overdue:
-                seg += f"（逾期 {overdue}）"
-            parts.append(seg)
-        tail = f"，另有 {len(busy) - len(shown)} 人有在办" if len(busy) > len(shown) else ""
-        lines.append("在办：" + "、".join(parts) + tail)
-    else:
-        lines.append("在办：暂无记录")
-
-    overdue_total = sum(o for _, o, _ in busy)
-    if overdue_total:
-        lines.append(f"⚠ 逾期合计 {overdue_total} 件")
-
-    # 考勤汇总：只在真有采集数据时加。没有数据就整行不出现，
-    # 绝不写「全员未打卡」这种从缺失推出来的结论。
-    att = attendance.summary()
-    if att:
-        if att.get("full"):
-            seg = f"考勤（全员）：已打卡 {att['checked']}/{att['total']}"
-        else:
-            # 覆盖不全时分母只能写「已采集人数」：写成 1/11 会让人
-            # 以为十个人没来上班，而事实是我们只查到了一个人
-            seg = f"考勤（已采集 {att['scoped']}/{att['total']} 人）：其中已打卡 {att['checked']}"
-        lines.append(seg)
-
-    return "\n".join(lines)
+    实现搬到 card.legacy_lines()，这里只做委托：卡片正文和文本兜底必须是
+    同一份文案，两份各写一遍迟早会漂移（改了卡片忘了文本，群里就两套说法）。
+    """
+    return card.build_text()
 
 
 def already_sent_today(chat_id):
