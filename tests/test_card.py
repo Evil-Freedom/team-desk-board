@@ -183,18 +183,33 @@ class CardTest(unittest.TestCase):
         self.assertIn("逾期提醒", blob)
         self.assertNotIn("<font color='red'>**逾期提醒**", blob)
 
-    def test_overdue_shows_big_red_number(self):
+    def test_overdue_is_stacked_not_side_by_side(self):
+        """逾期改成上下结构：标题行（左标题/右胶囊）+ 负责人整行。"""
         self._seed()
         import copy
         d = copy.deepcopy(card.collect())
         d.update(total=5, normal=3, away=1, leave=1,
                  away_list=[("x", "上海")], leave_list=[("y", "年假")],
                  busy=[(6, 2, "王赵盼")], overdue_total=2)
-        c = card.build(data=d)
-        blob = json.dumps(c, ensure_ascii=False)
+        blob = json.dumps(card.build(data=d), ensure_ascii=False)
         self.assertIn("负责人：", blob)
-        self.assertIn("heading-0", blob)            # 超大号数字
-        self.assertIn("text_align", blob)
+        self.assertIn("<text_tag color='red'>2 件</text_tag>", blob)
+        # 星号必须成对且不跨标签：`** 件**` 这种会在客户端渲染出裸星号
+        self.assertNotIn("** 件**", blob)
+        self.assertNotIn("****", blob)
+
+    def test_no_stray_asterisk_anywhere(self):
+        """任何分支都不允许出现落单的星号（客户端会原样显示）。"""
+        self._seed()
+        import copy, re
+        for busy, total in ([((6, 2, "王赵盼"),), 2], [((3, 0, "张三"),), 0], ((), 0)):
+            d = copy.deepcopy(card.collect())
+            d.update(total=5, normal=3, away=1, leave=1,
+                     away_list=[("x", "上海")], leave_list=[("y", "年假")],
+                     busy=list(busy), overdue_total=total)
+            blob = json.dumps(card.build(data=d), ensure_ascii=False)
+            self.assertIsNone(re.search(r"(?<!\*)\*\*(?!\*)", blob.replace("**", "")),
+                              msg=f"busy={busy}")
 
     def test_no_module_when_section_empty(self):
         """没有出差/请假时，对应模块整块不出现（不留空容器）。"""

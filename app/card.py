@@ -183,7 +183,7 @@ def _stat(value, label, color):
         "vertical_align": "top",
         # 参考卡片把统计数字放在浅色圆角块里，而不是裸数字漂浮在空白上
         "background_style": "grey-50",
-        "padding": "10px 4px 10px 4px",
+        "padding": "8px 4px 8px 4px",
         "elements": [
             {"tag": "markdown", "text_align": "center", "text_size": "heading-0",
              "content": f"<font color='{color}'>**{value}**</font>"},
@@ -258,67 +258,36 @@ def _module(title, badge, color, rows, tint=None):
             # 只用极浅灰：飞书的 background_style 没有 50 号浅色，
             # 深橙/深绿铺满既刺眼又会让同色标题隐身
             "background_style": tint or "grey-50",
-            "padding": "10px 12px 10px 12px",
+            "padding": "8px 12px 8px 12px",
             "elements": [head, {"tag": "hr"}] + list(rows),
         }],
     }
 
 
 def _overdue_module(d):
-    """逾期提醒单独一块：左侧标题 + 负责人，右侧超大红色数字。
+    """逾期提醒：与其它模块同构的上下长条。
 
-    不做成和「在办事项」一样的列表——同一批人在两块里各出现一次，
-    看起来像数据重复；这里只回答「今天有几件逾期、谁背的」。
+    有逾期：标题行（左「逾期提醒」/ 右红色胶囊「N 件」）+ 负责人整行。
+    零逾期：同结构，徽标换成中性胶囊「0 件」，底色回到 grey-50。
+
+    为什么把负责人单独放一整行：
+        手机窄屏下左侧塞「负责人：张三、李四」、右侧再挤一个超大数字，
+        负责人会被压成两三行。上下结构把横向空间全留给这行文字。
     """
     people = [(n, v) for _doing, v, n in d["busy"] if v]
-    pad = "10px 12px 10px 12px"
+    total = d["overdue_total"]
 
     if not people:
-        # 零逾期不能挤成一行灰字：结构要和其他模块一致（左标题 / 右徽标），
-        # 否则卡片底部会突然"塌"下去一块
-        head = {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "small",
-                "columns": [
-                    {"tag": "column", "width": "weighted", "weight": 3,
-                     "vertical_align": "center",
-                     "elements": [{"tag": "markdown",
-                                   "content": "<font color='grey'>**逾期提醒**</font>"}]},
-                    {"tag": "column", "width": "auto", "vertical_align": "center",
-                     "horizontal_align": "right",
-                     "elements": [{"tag": "markdown", "text_align": "right",
-                                   "content": "<text_tag color='neutral'>0 件</text_tag>"}]},
-                ]}
-        return {"tag": "column_set", "flex_mode": "none", "columns": [{
-            "tag": "column", "width": "weighted", "weight": 1,
-            "background_style": "grey-50", "padding": "10px 12px 10px 12px",
-            "elements": [head],
-        }]}
+        return _module("逾期提醒", "0 件", "grey",
+                       [{"tag": "markdown", "text_size": "notation",
+                         "content": "<font color='grey'>暂无逾期事项</font>"}])
 
-    # 姓名放宽到 20 字：10 字会把「测试超长姓名」切成「测试超长姓」，
-    # 少一个字比折行更难看
-    names = "、".join(f"**{_esc(n, 20)}**" for n, _v in people[:3])
-    more = f" 等 {len(people)} 人" if len(people) > 3 else ""
-    return {"tag": "column_set", "flex_mode": "none", "columns": [{
-        "tag": "column", "width": "weighted", "weight": 1,
-        "background_style": "red-50", "padding": pad,
-        "elements": [{
-            "tag": "column_set", "flex_mode": "none", "horizontal_spacing": "small",
-            "columns": [
-                {"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center",
-                 "elements": [{"tag": "markdown", "content": chr(10).join([
-                     "<font color='red'>**逾期提醒**</font>",
-                     # 「负责人：」也用主文字色：次要灰在暗色下几乎看不见，
-                     # 而这一行是告警模块里最需要被读到的信息
-                     f"负责人：{names}{more}",
-                 ])}]},
-                {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
-                 "horizontal_align": "right",
-                 "elements": [{"tag": "markdown", "text_align": "right",
-                               "text_size": "heading-0",
-                               "content": (f"<font color='red'>**{d['overdue_total']}**</font>"
-                                           f"<font color='grey' size='12'>** 件**</font>")}]},
-            ],
-        }],
-    }]}
+    names = "、".join(f"**{_esc(n, 20)}**" for n, _v in people[:4])
+    more = f" 等 {len(people)} 人" if len(people) > 4 else ""
+    return _module("逾期提醒", f"{total} 件", "red",
+                   [{"tag": "markdown",
+                     "content": f"负责人：{names}{more}"}],
+                   tint="red-50")
 
 
 def _modules(d):
@@ -327,7 +296,7 @@ def _modules(d):
     out = []
     if d["away_list"]:
         # 地点普遍比姓名长，给地点更多宽度，减少折行次数
-        rows = [_cell_row(_esc(n, 20), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>",
+        rows = [_cell_row(_esc(n, 12), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>",
                           weight_left=2, weight_right=3)
                 for n, loc in d["away_list"][:8]]
         out.append(_module("出差人员", f"{d['away']} 人", "orange", rows))
