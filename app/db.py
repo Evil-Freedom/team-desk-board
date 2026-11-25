@@ -134,6 +134,18 @@ SCHEMA = [
         updated_at  INTEGER
     )""",
     "CREATE INDEX IF NOT EXISTS idx_att_identity_no ON attendance_identity(employee_no)",
+    # 一次性公告：主键即幂等键。宁可多发不出去，也不能发两遍。
+    """
+    CREATE TABLE IF NOT EXISTS announcements (
+        announcement_key TEXT PRIMARY KEY,
+        status           TEXT NOT NULL,   -- PENDING | SENDING | SENT | FAILED
+        message_id       TEXT,
+        target_chat_id   TEXT,
+        body_version     TEXT,
+        created_at       INTEGER,
+        sent_at          INTEGER,
+        note             TEXT
+    )""",
 ]
 
 

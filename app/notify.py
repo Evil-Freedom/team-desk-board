@@ -27,10 +27,15 @@ def _token():
         return None, f"取 token 失败：{e}"
 
 
-def _send(receive_id, receive_id_type, text):
+def _send_ex(receive_id, receive_id_type, text):
+    """发送消息，返回 (ok, err, message_id)。
+
+    公告需要持久化真实 message_id 作为「确实发出去了」的证据，
+    原来只返回布尔值，事后无法证明是哪一条消息。
+    """
     token, err = _token()
     if err:
-        return False, err
+        return False, err, None
 
     body = json.dumps({
         "receive_id": receive_id,
@@ -48,10 +53,16 @@ def _send(receive_id, receive_id_type, text):
         with urllib.request.urlopen(req, timeout=15) as r:
             payload = json.loads(r.read().decode("utf-8"))
         if payload.get("code") == 0:
-            return True, None
-        return False, payload.get("msg")
+            mid = ((payload.get("data") or {}).get("message_id")) or None
+            return True, None, mid
+        return False, payload.get("msg"), None
     except Exception as e:
-        return False, repr(e)[:200]
+        return False, repr(e)[:200], None
+
+
+def _send(receive_id, receive_id_type, text):
+    ok, err, _mid = _send_ex(receive_id, receive_id_type, text)
+    return ok, err
 
 
 def send_text(open_ids, text):
@@ -69,6 +80,11 @@ def send_text(open_ids, text):
 def send_to_chat(chat_id, text):
     """发到群。机器人必须先被拉进群，否则报 230002。"""
     return _send(chat_id, "chat_id", text)
+
+
+def send_to_chat_ex(chat_id, text):
+    """发到群并返回 message_id（公告需要留证）。"""
+    return _send_ex(chat_id, "chat_id", text)
 
 
 def announce_url(url, extra_lines=None):
