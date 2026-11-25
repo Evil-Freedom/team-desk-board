@@ -63,18 +63,34 @@ class CardTest(unittest.TestCase):
         self.assertEqual(1, d["checked"])     # 只有 ou_a 有真实记录
         self.assertEqual(2, d["pending"])     # 其余两个在岗的没记录
 
-    def test_incomplete_data_is_labelled(self):
+    def test_incomplete_data_uses_business_wording(self):
+        """未完整只说「部分信息暂未更新」，不许暴露采集覆盖等技术细节。"""
         self._seed()
         c = card.build()
         sub = c["header"]["subtitle"]["content"]
-        self.assertIn("数据未完整", sub)
-        self.assertIn("1/5", sub)             # 覆盖 1 / 应到 5
+        self.assertIn("部分信息暂未更新", sub)
+        self.assertNotIn("考勤覆盖", sub)
+        self.assertNotIn("1/5", sub)
+
+    def test_complete_data_has_no_status_word(self):
+        self._seed(full=True)
+        sub = card.build()["header"]["subtitle"]["content"]
+        self.assertNotIn("部分信息", sub)
+        self.assertNotIn("数据完整", sub)     # 完整时不需要自夸
+
+    def test_card_exposes_no_internal_tech_info(self):
+        """群卡片是业务日报，不是运行监控：技术词一个都不能出现。"""
+        self._seed()
+        blob = json.dumps(card.build(), ensure_ascii=False) + card.build_text()
+        for bad in ("考勤", "覆盖", "OAuth", "Token", "token", "API", "VPS",
+                    "同步", "采集", "数据库", "接口", "权限", "错误", "异常"):
+            self.assertNotIn(bad, blob, msg=bad)
 
     def test_complete_data_when_everyone_authorized(self):
         self._seed(full=True)
         d = card.collect()
         self.assertTrue(d["complete"])
-        self.assertIn("数据完整", card.build()["header"]["subtitle"]["content"])
+        self.assertNotIn("部分信息", card.build()["header"]["subtitle"]["content"])
 
     def test_pending_is_not_called_absent(self):
         """卡片正文不能出现缺勤/旷工——查不到 ≠ 没来上班。"""
@@ -142,7 +158,9 @@ class CardTest(unittest.TestCase):
     def test_empty_members_does_not_claim_zero(self):
         self._seed(empty=True)
         c = card.build()
-        self.assertIn("尚未同步", c["header"]["subtitle"]["content"])
+        self.assertIn("部分信息暂未更新", c["header"]["subtitle"]["content"])
+        blob = json.dumps(c, ensure_ascii=False)
+        self.assertIn("还没有同步到成员数据", blob)
 
     def test_text_fallback_uses_same_source(self):
         """文本兜底与卡片共用 legacy_lines()，避免两套说法漂移。"""

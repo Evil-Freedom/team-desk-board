@@ -146,12 +146,14 @@ def legacy_lines(d=None, day=None, now=None):
 
 
 def _status_text(d):
-    if not d["synced"]:
-        return "数据尚未同步"
-    if d["complete"]:
-        return "数据完整"
-    cap = d["capability"]
-    return f"数据未完整（考勤覆盖 {cap['scoped']}/{cap['total']}）"
+    """群卡片里的状态提示：只说业务结论，不说采集过程。
+
+    「考勤覆盖 1/11」这类话对群成员没有意义——他们要看的是今天几个人在，
+    不是我们采到了几条记录。技术细节留在 attendance_sync_log 与 /api/health。
+    """
+    if d["synced"] and d["complete"]:
+        return ""                      # 完整就什么都不用说
+    return "部分信息暂未更新"
 
 
 def _stat(value, label, color):
@@ -226,7 +228,10 @@ def build(day=None, now=None, data=None):
     群里没人靠它做判断，占一行反而把正文挤掉。时间放在副标题就够。
     """
     d = data or collect(day, now)
-    subtitle = f"{d['date']} {d['weekday']} · 更新 {d['updated']} · {_status_text(d)}"
+    status = _status_text(d)
+    subtitle = f"{d['date']} {d['weekday']} · 更新 {d['updated']}"
+    if status:
+        subtitle += f" · {status}"
 
     elements = [
         {
@@ -279,4 +284,8 @@ def build_text(day=None, now=None, data=None):
     """纯文本兜底：卡片发送失败时至少让群里看到同样的话。"""
     d = data or collect(day, now)
     head = f"【{d['department']} · 今日状态】"
-    return "\n".join([head] + legacy_lines(d) + [BOARD_URL])
+    lines = [head] + legacy_lines(d)
+    status = _status_text(d)
+    if status:
+        lines.append(status)
+    return "\n".join(lines + [BOARD_URL])
