@@ -37,8 +37,21 @@ class AnnounceTest(unittest.TestCase):
         notify.send_to_chat_ex = self._send
 
     def _attendance(self, full):
-        """造当天的考勤记录；full=False 时只覆盖 1 人（模拟 per_user）。"""
+        """造当天的考勤记录；full=False 时只覆盖 1 人（模拟未全员授权）。
+
+        full=True 时同时给三个人写上带考勤 scope 的有效 token——
+        「覆盖」看的是能力（token + scope），不是「今天有几个人打卡」。
+        """
+        import time as _t
+        now = int(_t.time())
         with db.session() as conn:
+            for i in (range(3) if full else [0]):
+                conn.execute("""INSERT OR REPLACE INTO users
+                    (open_id,name,access_token,refresh_token,expires_at,
+                     refresh_expires_at,authorized_at,scope)
+                    VALUES (?,?,?,?,?,?,?,?)""",
+                             (f"ou_{i}", f"人{i}", "at", "rt", now + 3600, now + 86400,
+                              now, "offline_access attendance:task:readonly"))
             for i in (range(3) if full else [0]):
                 conn.execute("""INSERT INTO attendance_records
                     (attendance_date, employee_no, open_id, check_in_record_id,

@@ -83,8 +83,9 @@ def preflight():
 
     # 考勤覆盖：必须真的覆盖到全部成员，per_user 局部覆盖不算
     att = attendance.summary()
+    # 只看「能力是否覆盖全员」。取数方式（team / per_user）不影响判定：
+    # 全员各自授权后，per_user 一样是每人一条真实记录。
     checks["attendance_full"] = bool(att and att.get("full"))
-    checks["attendance_mode"] = (att or {}).get("coverage") == "team"
 
     # 今天必须真正跑过一次晨间统采
     day = attendance.today()
@@ -99,7 +100,8 @@ def preflight():
     from . import digest
     checks["digest_due_now_disabled"] = digest.due_now() is False
 
-    return {"ok": all(checks.values()), "checks": checks, "attendance": att}
+    return {"ok": all(checks.values()), "checks": checks, "attendance": att,
+            "capability": attendance.capability()}
 
 
 # ------------------------------------------------------------------ 发送

@@ -334,6 +334,35 @@ def current_mode(rows=None):
     return "none"
 
 
+# 采集能力判定：能不能覆盖全员，与「今天有几个人打卡」是两件事。
+# 前者看每个人手里有没有可用的、带考勤 scope 的 token；
+# 后者看当天有没有记录。把两者混在一起，会出现「全员都授权了但今天没人打卡
+# 就不算覆盖全员」的荒谬结论。
+ATT_SCOPE = "attendance:task:readonly"
+
+
+def capability(now=None):
+    now = int(now or time.time())
+    with db.session() as conn:
+        total = conn.execute("SELECT COUNT(*) c FROM members").fetchone()["c"]
+        rows = [dict(r) for r in conn.execute(
+            "SELECT open_id, scope, expires_at, refresh_expires_at, refresh_token FROM users")]
+
+    usable = 0
+    for r in rows:
+        token_alive = ((r["expires_at"] or 0) > now or
+                       (bool(r["refresh_token"]) and (r["refresh_expires_at"] or 0) > now))
+        has_scope = ATT_SCOPE in (r["scope"] or "")
+        if token_alive and has_scope:
+            usable += 1
+
+    # 工号映射齐全时走应用身份，不受个人 token 影响
+    mapped = len({v for v in identity_map().values() if v})
+    scoped = max(usable, mapped)
+    return {"scoped": scoped, "total": total, "usable": usable,
+            "mapped": mapped, "full": total > 0 and scoped >= total}
+
+
 def summary(day=None):
     """日报用的一句话汇总：只在真有数据时才给结论。"""
     day = day or today()
@@ -348,15 +377,15 @@ def summary(day=None):
         if r.get("open_id"):
             by_open[r["open_id"]] = r
     checked = sum(1 for r in by_open.values() if classify(r) == CHECKED_IN)
-    total = len(members) if members else len(by_open)
-    # 覆盖率必须按「谁被查了」算：per_user 模式下 total 是全部门，
-    # 直接用会得到「已打卡 1/11」这种看着像全员缺勤的错误结论。
-    scoped = len(by_open) if by_open else len(rows)
-    # 关键区分：mode=team 说的是「取数方式」，不等于「覆盖了全员」。
-    # 工号映射只有 1 条时，team 模式也只能采到 1 个人。
-    return {"checked": checked, "scoped": scoped, "total": total,
+    cap = capability()
+    total = cap["total"] or len(members) or len(by_open)
+    # 关键区分：mode 说的是「取数方式」，full 说的是「是否具备全员能力」。
+    # 两者都不能用「今天有几个人打卡」来代替。
+    return {"checked": checked,
+            "with_record": len(by_open),
+            "scoped": cap["scoped"], "total": total,
             "coverage": current_mode(records_for_day(day)),
-            "full": scoped >= total}
+            "full": cap["full"]}
 
 
 def last_log():
