@@ -17,8 +17,35 @@ import time
 
 from . import attendance, config, db, notify
 
+# 两条独立公告，互不影响：
+#   1) 外网访问功能通知 —— 只要公网可用 + 权限隔离有效即可发；
+#   2) 业务上线公告 —— 需要全员采集 + 真实闭环，另算。
 KEY = "team-desk-board-public-launch-v1"
 BODY_VERSION = "v1"
+EXT_KEY = "team-desk-board-external-access-notice-v1"
+EXT_VERSION = "v1"
+
+EXT_TITLE = "📢 运营部状态看板新增外网访问功能"
+EXT_BODY = """各位同事：
+
+运营部状态看板现已新增外网访问功能！
+
+现在无需连接公司内网，通过手机或电脑浏览器即可直接访问看板。
+
+🌐 看板访问地址：
+
+https://xbyyb.duckdns.org
+
+使用说明：
+
+1. 手机、电脑均可直接访问。
+2. 无需连接公司内网。
+3. 使用本人飞书账号登录。
+4. 系统按照原有部门及角色权限展示相应内容。
+
+如果遇到无法访问或登录异常，请联系看板管理员。
+
+欢迎大家体验使用！"""
 
 # 公告正文：与需求给定的版本逐字一致，改动需同步升 BODY_VERSION
 TITLE = "📢 运营部状态看板正式开放外网访问"
@@ -105,7 +132,7 @@ def preflight():
 
 
 # ------------------------------------------------------------------ 发送
-def _claim(key):
+def _claim(key, version=BODY_VERSION):
     """认领发送权。返回 (可发送, 现有记录, 原因)。"""
     _ensure()
     with db.session() as conn:
@@ -114,7 +141,7 @@ def _claim(key):
         if row is None:
             conn.execute(
                 "INSERT INTO announcements (announcement_key, status, created_at, body_version) "
-                "VALUES (?,?,?,?)", (key, "SENDING", int(time.time()), BODY_VERSION))
+                "VALUES (?,?,?,?)", (key, "SENDING", int(time.time()), version))
             return True, None, "首次发送"
         row = dict(row)
         if row["status"] == "SENT":
@@ -160,4 +187,83 @@ def send_launch(key=KEY, force_preflight=True):
                 "body_version": BODY_VERSION}
     _mark(key, "FAILED", None, err)
     db.log(False, "announce", f"上线公告发送失败：{err}")
+    return {"ok": False, "error": err, "reason": "send_failed"}
+
+
+# ------------------------------------------------------------------ 外网访问通知
+def preflight_external():
+    """外网访问功能通知的前置条件。
+
+    刻意**不**检查考勤覆盖与真实闭环：这条公告只说「看板可以通过公网访问了」，
+    与考勤业务是否跑通是两件事。把它们绑在一起，会出现「外网明明能用了，
+    却因为有人没授权所以不能通知大家去用」的荒谬状态。
+
+    这里只放能被程序自证的条件；真正的「从外部网络访问成功」由发布人
+    在 VPS 之外实测（本次已做：health 200、未登录 401、已登录 200、
+    敏感文件 302、8900/8780 公网不可达）。
+    """
+    import urllib.error
+    import urllib.request
+
+    conf = config.load()
+    checks = {}
+
+    checks["target_chat"] = bool(conf.get("digest_chat_id"))
+    checks["allow_departments"] = bool(conf.get("allow_departments"))
+    checks["app_id"] = bool(conf.get("app_id") and conf.get("app_secret"))
+
+    # 1) 本机经 Caddy 访问自己的公网域名必须通（证明反代 + 证书 + 服务都在）
+    try:
+        with urllib.request.urlopen("https://xbyyb.duckdns.org/api/health", timeout=12) as r:
+            body = r.read(400).decode("utf-8", "replace")
+        checks["public_https"] = '"ok": true' in body or '"ok":true' in body
+    except Exception:
+        checks["public_https"] = False
+
+    # 2) 未登录必须 401（权限隔离还在，没有因为上公网被放开）
+    try:
+        urllib.request.urlopen("https://xbyyb.duckdns.org/api/board", timeout=12)
+        checks["anonymous_denied"] = False
+    except urllib.error.HTTPError as e:
+        checks["anonymous_denied"] = e.code == 401
+    except Exception:
+        checks["anonymous_denied"] = False
+
+    # 3) OAuth 回调白名单已含公网地址（否则新用户点登录会失败）
+    try:
+        d, _ = feishu_app_info()
+        urls = ((d or {}).get("app") or {}).get("redirect_urls") or []
+        checks["oauth_redirect"] = "https://xbyyb.duckdns.org/oauth/callback" in urls
+    except Exception:
+        checks["oauth_redirect"] = False
+
+    return {"ok": all(checks.values()), "checks": checks}
+
+
+def feishu_app_info():
+    from . import feishu
+    return feishu.app("/open-apis/application/v6/applications/%s"
+                      % (config.load().get("app_id") or ""), params={"lang": "zh_cn"})
+
+
+def send_external_notice(key=EXT_KEY):
+    """发送「外网访问功能」通知。一次性，绝不重复。"""
+    pf = preflight_external()
+    if not pf["ok"]:
+        return {"ok": False, "reason": "preflight_failed", "preflight": pf}
+
+    ok_claim, row, why = _claim(key, version=EXT_VERSION)
+    if not ok_claim:
+        return {"ok": row.get("status") == "SENT", "reason": why, "record": row}
+
+    chat_id = config.load().get("digest_chat_id") or ""
+    text = "\n\n".join([EXT_TITLE, EXT_BODY])
+    ok, err, mid = notify.send_to_chat_ex(chat_id, text)
+    if ok:
+        _mark(key, "SENT", mid, f"chat={chat_id} ver={EXT_VERSION}")
+        db.log(True, "announce", f"外网访问通知已发送 message_id={mid}")
+        return {"ok": True, "message_id": mid, "target_chat_id": chat_id,
+                "body_version": EXT_VERSION, "text": text}
+    _mark(key, "FAILED", None, err)
+    db.log(False, "announce", f"外网访问通知发送失败：{err}")
     return {"ok": False, "error": err, "reason": "send_failed"}

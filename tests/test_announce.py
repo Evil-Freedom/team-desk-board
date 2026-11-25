@@ -100,6 +100,38 @@ class AnnounceTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("未确认", why)
 
+    def test_external_notice_blocked_when_preflight_false(self):
+        orig = announce.preflight_external
+        announce.preflight_external = lambda: {"ok": False, "checks": {"public_https": False}}
+        try:
+            r = announce.send_external_notice()
+            self.assertFalse(r["ok"])
+            self.assertEqual("preflight_failed", r["reason"])
+            self.assertEqual([], self.sent)      # 未通过就一条都不发
+        finally:
+            announce.preflight_external = orig
+
+    def test_external_notice_sent_once_with_message_id(self):
+        orig = announce.preflight_external
+        announce.preflight_external = lambda: {"ok": True, "checks": {}}
+        try:
+            r1 = announce.send_external_notice()
+            self.assertTrue(r1["ok"], msg=str(r1))
+            self.assertEqual("om_msg_1", r1["message_id"])
+            self.assertEqual("v1", r1["body_version"])
+            r2 = announce.send_external_notice()
+            self.assertTrue(r2["ok"])
+            self.assertIn("已发送", r2["reason"])
+            self.assertEqual(1, len(self.sent))   # 幂等，不重复打扰
+        finally:
+            announce.preflight_external = orig
+
+    def test_external_body_has_no_internal_terms(self):
+        """公告只说外网访问，不能夹带考勤/授权等内部信息。"""
+        text = announce.EXT_TITLE + announce.EXT_BODY
+        for w in ("考勤", "打卡", "OAuth", "QuickLaunch", "VPS", "采集", "授权"):
+            self.assertNotIn(w, text, msg=w)
+
     def test_failed_can_retry(self):
         with db.session() as conn:
             conn.execute("INSERT INTO announcements (announcement_key,status,created_at) "
