@@ -162,6 +162,9 @@ def _stat(value, label, color):
         "width": "weighted",
         "weight": 1,
         "vertical_align": "top",
+        # 参考卡片把统计数字放在浅色圆角块里，而不是裸数字漂浮在空白上
+        "background_style": "grey",
+        "padding": "10px 4px 10px 4px",
         "elements": [{
             "tag": "markdown",
             "text_align": "center",
@@ -202,8 +205,12 @@ def _todo_md(d):
         parts.append(seg)
     tail = f"　另有 {len(d['busy']) - len(shown)} 人有在办" if len(d["busy"]) > len(shown) else ""
     line = "📋 **在办**　" + "、".join(parts) + tail
-    if d["overdue_total"]:
-        line += chr(10) + f"⚠️ 逾期合计 {d['overdue_total']} 件"
+    # 只报「逾期合计 2 件」看不出是谁拖的，落到人头上才有用
+    overdue = [(name, ov) for _doing, ov, name in d["busy"] if ov]
+    if overdue:
+        seg = "、".join(f"{_esc(n, 12)} {v} 件" for n, v in overdue[:3])
+        more = f" 等 {len(overdue)} 人" if len(overdue) > 3 else ""
+        line += chr(10) + f"⚠️ **逾期**　{seg}{more}（合计 {d['overdue_total']} 件）"
     return line
 
 
