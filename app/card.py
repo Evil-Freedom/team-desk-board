@@ -102,18 +102,15 @@ def build(day=None, now=None):
     """构造卡片 JSON。返回 dict，调用方序列化后作为 msg_type=interactive 的 content。"""
     d = collect(day, now)
 
+    # 完整性只写在副标题里，正文不再堆一段说明——
+    # 群里要看的是数字，解释留给在线看板。
     if not d["synced"]:
-        # 连成员都没同步到时不要发一张全是 0 的卡片
         status_text = "数据尚未同步"
-        body_note = "成员数据还没同步到，这条只是占位，请检查服务是否正常。"
     elif d["complete"]:
         status_text = "数据完整"
-        body_note = "考勤覆盖全部成员，以下为实时统计。"
     else:
         cap = d["capability"]
         status_text = f"数据未完整（考勤覆盖 {cap['scoped']}/{cap['total']}）"
-        body_note = ("部分成员的考勤尚未采集到，未采集的人计入「待确认」，"
-                     "不代表缺勤。详情以在线看板为准。")
 
     subtitle = f"{d['date']} {d['weekday']} · 更新 {d['updated']} · {status_text}"
 
@@ -124,11 +121,10 @@ def build(day=None, now=None):
             "horizontal_spacing": "default",
             "columns": [
                 _stat_column(d["total"], "今日应到", "blue"),
-                _stat_column(d["normal"], "审批在岗", "green"),
+                _stat_column(d["normal"], "在岗", "green"),
                 _stat_column(d["pending"], "待确认", "orange"),
             ],
         },
-        {"tag": "markdown", "content": body_note, "text_size": "notation"},
         {"tag": "hr"},
         {
             "tag": "markdown",
@@ -182,7 +178,7 @@ def build_text(day=None, now=None):
     return "\n".join([
         f"【{d['department']} · 今日在岗概览】",
         f"{d['date']} {d['weekday']} · 更新 {d['updated']}",
-        f"应到 {d['total']} · 审批在岗 {d['normal']} · 待确认 {d['pending']}",
+        f"应到 {d['total']} · 在岗 {d['normal']} · 待确认 {d['pending']}",
         f"请假 {d['leave']} · 出差外勤 {d['away']} · 考勤已确认 {d['checked']}",
         f"数据：{'完整' if d['complete'] else '未完整（考勤覆盖 %d/%d）' % (d['capability']['scoped'], d['capability']['total'])}",
         BOARD_URL,
