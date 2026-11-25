@@ -169,7 +169,7 @@ def _stat(value, label, color):
         "padding": "10px 4px 10px 4px",
         "elements": [
             {"tag": "markdown", "text_align": "center", "text_size": "heading-0",
-             "content": f"<font color='{color}'>{value}</font>"},
+             "content": f"<font color='{color}'>**{value}**</font>"},
             {"tag": "markdown", "text_align": "center", "text_size": "notation",
              "content": f"<font color='grey'>{label}</font>"},
         ],
@@ -190,10 +190,10 @@ def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2):
         "horizontal_spacing": "small",
         "columns": [
             {"tag": "column", "width": "weighted", "weight": weight_left,
-             "vertical_align": "center",
+             "vertical_align": "top",
              "elements": [{"tag": "markdown", "content": f"**{left}**"}]},
             {"tag": "column", "width": "weighted", "weight": weight_right,
-             "vertical_align": "center", "horizontal_align": "right",
+             "vertical_align": "top", "horizontal_align": "right",
              # text_align 才是让文字贴右的属性；horizontal_align 只对齐子元素盒子
              "elements": [{"tag": "markdown", "text_align": "right",
                            "content": right_md}]},
@@ -254,7 +254,9 @@ def _overdue_module(d):
                           "content": "<font color='grey'>逾期提醒　暂无逾期事项</font>"}],
         }]}
 
-    names = "、".join(_esc(n, 10) for n, _v in people[:3])
+    # 姓名放宽到 20 字：10 字会把「测试超长姓名」切成「测试超长姓」，
+    # 少一个字比折行更难看
+    names = "、".join(f"**{_esc(n, 20)}**" for n, _v in people[:3])
     more = f" 等 {len(people)} 人" if len(people) > 3 else ""
     return {"tag": "column_set", "flex_mode": "none", "columns": [{
         "tag": "column", "width": "weighted", "weight": 1,
@@ -265,13 +267,14 @@ def _overdue_module(d):
                 {"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center",
                  "elements": [{"tag": "markdown", "content": chr(10).join([
                      "<font color='red'>**逾期提醒**</font>",
-                     f"<font color='grey'>负责人：{names}{more}</font>",
+                     # 标签深灰常规、姓名黑色加粗，与上方模块的姓名同等醒目
+                     f"<font color='grey'>负责人：</font>{names}{more}",
                  ])}]},
                 {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
                  "horizontal_align": "right",
                  "elements": [{"tag": "markdown", "text_align": "right",
                                "text_size": "heading-0",
-                               "content": (f"<font color='red'>{d['overdue_total']}</font>"
+                               "content": (f"<font color='red'>**{d['overdue_total']}**</font>"
                                            f"<font color='red' size='12'> 件</font>")}]},
             ],
         }],

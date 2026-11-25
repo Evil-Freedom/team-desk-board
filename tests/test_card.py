@@ -108,7 +108,10 @@ class CardTest(unittest.TestCase):
         import re
         labels = [re.sub(r"<[^>]+>", "", c["elements"][1]["content"]) for c in cols]
         self.assertEqual(["今日应到", "在岗", "出差", "请假"], labels)
-        values = [re.sub(r"<[^>]+>", "", c["elements"][0]["content"]) for c in cols]
+        values = [re.sub(r"<[^>]+>", "", c["elements"][0]["content"]).replace("**", "")
+                  for c in cols]
+        # 大数字必须加粗，否则 heading-0 也压不住版面
+        self.assertIn("**", cols[0]["elements"][0]["content"])
         # 数字必须是大号：heading-0 才有视觉层级
         self.assertEqual("heading-0", cols[0]["elements"][0]["text_size"])
         self.assertEqual("grey-50", cols[0]["background_style"])
