@@ -184,18 +184,18 @@ def _detail_md(d):
     if d["away_list"]:
         items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
                          for n, loc in d["away_list"][:8])
-        segs.append(f"🚗 **出差**　{items}")
+        segs.append(f"<font color='orange'>**出差**</font>　{items}")
     if d["leave_list"]:
         items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
                          for n, loc in d["leave_list"][:8])
-        segs.append(f"🌴 **休假**　{items}")
+        segs.append(f"<font color='red'>**休假**</font>　{items}")
     return chr(10).join(segs)
 
 
 def _todo_md(d):
     """在办块：前 5 人，带件数；有逾期才补一句合计。"""
     if not d["busy"]:
-        return "📋 **在办**　暂无记录"
+        return "<font color='grey'>**在办**</font>　暂无记录"
     shown = d["busy"][:5]
     parts = []
     for doing, overdue, name in shown:
@@ -204,13 +204,14 @@ def _todo_md(d):
             seg += f"（逾期 {overdue}）"
         parts.append(seg)
     tail = f"　另有 {len(d['busy']) - len(shown)} 人有在办" if len(d["busy"]) > len(shown) else ""
-    line = "📋 **在办**　" + "、".join(parts) + tail
+    line = "<font color='grey'>**在办**</font>　" + "、".join(parts) + tail
     # 只报「逾期合计 2 件」看不出是谁拖的，落到人头上才有用
     overdue = [(name, ov) for _doing, ov, name in d["busy"] if ov]
     if overdue:
         seg = "、".join(f"{_esc(n, 12)} {v} 件" for n, v in overdue[:3])
         more = f" 等 {len(overdue)} 人" if len(overdue) > 3 else ""
-        line += chr(10) + f"⚠️ **逾期**　{seg}{more}（合计 {d['overdue_total']} 件）"
+        line += chr(10) + (f"<font color='red'>**逾期**</font>　{seg}{more}"
+                           f"（合计 {d['overdue_total']} 件）")
     return line
 
 
