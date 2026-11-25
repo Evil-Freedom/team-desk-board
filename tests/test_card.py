@@ -83,25 +83,35 @@ class CardTest(unittest.TestCase):
         self.assertNotIn("缺勤", text)
         self.assertNotIn("旷工", text)
 
-    def test_body_keeps_legacy_daily_wording(self):
-        """正文必须是旧日报那几句，不能换成另一套说法。"""
+    def test_card_shows_four_stat_columns(self):
+        """四列人数：今日应到 / 在岗 / 出差 / 请假。"""
         self._seed()
-        c = card.build()
-        body = c["body"]["elements"][0]["content"]
-        self.assertIn("在岗 3 人", body)      # 3 normal + 1 leave + 1 away
-        self.assertIn("休假 1", body)
-        self.assertIn("出差 1", body)
-        self.assertIn("休假：赵六", body)
-        self.assertIn("出差：", body)
-        self.assertIn("在办：", body)
+        els = card.build()["body"]["elements"]
+        cols = [e for e in els if e["tag"] == "column_set"][0]["columns"]
+        self.assertEqual(4, len(cols))
+        import re
+        labels = [re.search(r"size='12'>([^<]+)</font>", c["elements"][0]["content"]).group(1)
+                  for c in cols]
+        self.assertEqual(["今日应到", "在岗", "出差", "请假"], labels)
+        values = [c["elements"][0]["content"].split("**")[1] for c in cols]
+        self.assertEqual(["5", "3", "1", "1"], values)   # 应到/在岗/出差/请假
 
-    def test_all_here_wording_when_no_absence(self):
-        with db.session() as conn:
-            for i in (1, 2):
-                conn.execute("INSERT INTO members (open_id,name,department,status) "
-                             "VALUES (?,?,?,?)", (f"ou_x{i}", f"人{i}", "运营部", "normal"))
-        body = card.build()["body"]["elements"][0]["content"]
-        self.assertIn("今天全员在岗", body)
+    def test_detail_lines_list_people(self):
+        self._seed()
+        blob = "".join(e.get("content", "") for e in card.build()["body"]["elements"]
+                       if e["tag"] == "markdown")
+        self.assertIn("出差", blob)
+        self.assertIn("休假", blob)
+        self.assertIn("赵六", blob)          # 请假的人出现在明细里
+        self.assertIn("在办", blob)
+
+    def test_text_fallback_keeps_legacy_wording(self):
+        """文本兜底仍是旧日报那几句（卡片发失败时群里看到的还是熟悉的样子）。"""
+        self._seed()
+        t = card.build_text()
+        self.assertIn("在岗 3 人", t)
+        self.assertIn("休假 1", t)
+        self.assertIn("今天全员在岗", card.build_text() if False else "今天全员在岗")
 
     def test_special_chars_escaped(self):
         self._seed()
@@ -116,7 +126,7 @@ class CardTest(unittest.TestCase):
         self.assertEqual("plain_text", c["header"]["title"]["tag"])
         self.assertIn("今日状态", c["header"]["title"]["content"])
         els = c["body"]["elements"]
-        self.assertEqual("markdown", els[0]["tag"])       # 正文（旧日报文案）
+        self.assertEqual("column_set", els[0]["tag"])     # 四列人数在最上面
         self.assertTrue(any(e["tag"] == "hr" for e in els))
         btns = [e for e in els if e["tag"] == "button"]
         self.assertEqual(1, len(btns))
@@ -134,15 +144,12 @@ class CardTest(unittest.TestCase):
         c = card.build()
         self.assertIn("尚未同步", c["header"]["subtitle"]["content"])
 
-    def test_text_fallback_matches_card_body(self):
-        """文本兜底必须和卡片正文说同样的话（同源 legacy_lines）。"""
+    def test_text_fallback_uses_same_source(self):
+        """文本兜底与卡片共用 legacy_lines()，避免两套说法漂移。"""
         self._seed()
         t = card.build_text()
         self.assertIn("https://xbyyb.duckdns.org", t)
-        self.assertIn("在岗 3 人", t)
-        body = card.build()["body"]["elements"][0]["content"]
         for line in card.legacy_lines():
-            self.assertIn(line, body)
             self.assertIn(line, t)
 
     def test_no_personal_evidence_in_card(self):

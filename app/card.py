@@ -154,26 +154,100 @@ def _status_text(d):
     return f"数据未完整（考勤覆盖 {cap['scoped']}/{cap['total']}）"
 
 
+def _stat(value, label, color):
+    """四列人数里的一列：数字大、标签小。四列在手机上会等比缩，
+    所以标签最多 4 个字（「今日应到」「在岗」「出差」「请假」）。"""
+    return {
+        "tag": "column",
+        "width": "weighted",
+        "weight": 1,
+        "vertical_align": "top",
+        "elements": [{
+            "tag": "markdown",
+            "text_align": "center",
+            "content": "".join([f"<font color='{color}' size='24'>**{value}**</font>",
+                                chr(10),
+                                f"<font color='grey' size='12'>{label}</font>"]),
+        }],
+    }
+
+
+def _detail_md(d):
+    """明细块：出差 / 休假 各一行，带前置圆点，和上面的数字列区分开。
+
+    没有明细时不放空行——群里最怕一条只有标题和按钮的空卡片。
+    """
+    segs = []
+    if d["away_list"]:
+        items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
+                         for n, loc in d["away_list"][:8])
+        segs.append(f"🚗 **出差**　{items}")
+    if d["leave_list"]:
+        items = "、".join(f"{_esc(n, 12)}·{_esc(loc, 10)}" if loc else _esc(n, 12)
+                         for n, loc in d["leave_list"][:8])
+        segs.append(f"🌴 **休假**　{items}")
+    return chr(10).join(segs)
+
+
+def _todo_md(d):
+    """在办块：前 5 人，带件数；有逾期才补一句合计。"""
+    if not d["busy"]:
+        return "📋 **在办**　暂无记录"
+    shown = d["busy"][:5]
+    parts = []
+    for doing, overdue, name in shown:
+        seg = f"{_esc(name, 12)} {doing} 件"
+        if overdue:
+            seg += f"（逾期 {overdue}）"
+        parts.append(seg)
+    tail = f"　另有 {len(d['busy']) - len(shown)} 人有在办" if len(d["busy"]) > len(shown) else ""
+    line = "📋 **在办**　" + "、".join(parts) + tail
+    if d["overdue_total"]:
+        line += chr(10) + f"⚠️ 逾期合计 {d['overdue_total']} 件"
+    return line
+
+
 def build(day=None, now=None):
-    """构造卡片：旧日报的正文 + 卡片外壳（标题条 / 分割线 / 按钮）。"""
+    """构造卡片：四列人数 → 明细 → 在办 → 入口按钮。
+
+    刻意不放「数据更新于 xx:xx · 口径…」那种脚注：
+    群里没人靠它做判断，占一行反而把正文挤掉。时间放在副标题就够。
+    """
     d = collect(day, now)
-    body = "\n".join(legacy_lines(d))
     subtitle = f"{d['date']} {d['weekday']} · 更新 {d['updated']} · {_status_text(d)}"
 
     elements = [
-        {"tag": "markdown", "content": body},
-        {"tag": "hr"},
-        {"tag": "markdown",
-         "content": f"<font color='grey' size='12'>数据更新于 {d['updated_full']} · "
-                    f"口径：审批状态 + 考勤采集</font>"},
         {
-            "tag": "button",
-            "text": {"tag": "plain_text", "content": "打开运营部在线看板"},
-            "type": "primary",
-            "width": "fill",
-            "url": BOARD_URL,
+            "tag": "column_set",
+            "flex_mode": "none",
+            "horizontal_spacing": "default",
+            "columns": [
+                _stat(d["total"], "今日应到", "blue"),
+                _stat(d["normal"], "在岗", "green"),
+                _stat(d["away"], "出差", "orange"),
+                _stat(d["leave"], "请假", "red"),
+            ],
         },
+        {"tag": "hr"},
     ]
+
+    if not d["synced"]:
+        elements.append({"tag": "markdown",
+                         "content": "还没有同步到成员数据，请检查服务是否正常。",
+                         "text_size": "notation"})
+    else:
+        detail = _detail_md(d)
+        if detail:
+            elements.append({"tag": "markdown", "content": detail})
+        elements.append({"tag": "markdown", "content": _todo_md(d)})
+
+    elements.append({
+        "tag": "button",
+        "text": {"tag": "plain_text", "content": "打开运营部在线看板"},
+        "type": "primary",
+        "width": "fill",
+        "url": BOARD_URL,
+    })
 
     return {
         "schema": "2.0",
