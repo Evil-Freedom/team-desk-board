@@ -228,7 +228,7 @@ def _cell_row(left, right, right_color=None, weight_left=3, weight_right=2,
     }
 
 
-def _module(title, badge, color, rows, tint=None):
+def _module(title, badge, color, rows, tint=None, badge_size="heading-4"):
     """一个业务模块：浅色底容器 + 标题行（左标题 / 右徽标）+ 多行明细。
 
     每个模块自己是独立容器（column 带 background_style），
@@ -244,8 +244,11 @@ def _module(title, badge, color, rows, tint=None):
                            "content": f"<font color='{color}'>**{title}**</font>"}]},
             {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
              "horizontal_align": "right",
+             # 徽标曾用 text_tag，但它的字号锁死，PC 宽屏上小得几乎看不见；
+             # 改成文本 + text_size，双端由客户端自己缩放
              "elements": [{"tag": "markdown", "text_align": "right",
-                           "content": f"<text_tag color='{color}'>{badge}</text_tag>"}]},
+                           "text_size": badge_size,
+                           "content": f"<font color='{color}'>**{badge}**</font>"}]},
         ],
     }
     return {
@@ -280,14 +283,15 @@ def _overdue_module(d):
     if not people:
         return _module("逾期提醒", "0 件", "grey",
                        [{"tag": "markdown", "text_size": "notation",
-                         "content": "<font color='grey'>暂无逾期事项</font>"}])
+                         "content": "<font color='grey'>暂无逾期事项</font>"}],
+                       badge_size="heading-4")
 
     names = "、".join(f"**{_esc(n, 20)}**" for n, _v in people[:4])
     more = f" 等 {len(people)} 人" if len(people) > 4 else ""
     return _module("逾期提醒", f"{total} 件", "red",
                    [{"tag": "markdown",
                      "content": f"负责人：{names}{more}"}],
-                   tint="red-50")
+                   tint="red-50", badge_size="heading-2")
 
 
 def _modules(d):

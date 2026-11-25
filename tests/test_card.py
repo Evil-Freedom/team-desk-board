@@ -147,8 +147,10 @@ class CardTest(unittest.TestCase):
         self.assertEqual("right", first_row["columns"][1]["elements"][0]["text_align"])
         self.assertEqual("right",
                          inner[0]["columns"][1]["elements"][0]["text_align"])
-        # 徽标必须是原生胶囊，不是纯文字
-        self.assertIn("<text_tag", inner[0]["columns"][1]["elements"][0]["content"])
+        # 徽标用大号加粗文本（text_tag 字号锁死，PC 上太小）
+        badge = inner[0]["columns"][1]["elements"][0]
+        self.assertEqual("heading-4", badge["text_size"])
+        self.assertIn("**", badge["content"])
         # 按钮实心蓝底白字
         btns = [e for e in card.build()["body"]["elements"] if e["tag"] == "button"]
         self.assertEqual("primary_filled", btns[0]["type"])
@@ -193,7 +195,7 @@ class CardTest(unittest.TestCase):
                  busy=[(6, 2, "王赵盼")], overdue_total=2)
         blob = json.dumps(card.build(data=d), ensure_ascii=False)
         self.assertIn("负责人：", blob)
-        self.assertIn("<text_tag color='red'>2 件</text_tag>", blob)
+        self.assertIn("heading-2", blob)          # 逾期徽标比其它模块大一号
         # 星号必须成对且不跨标签：`** 件**` 这种会在客户端渲染出裸星号
         self.assertNotIn("** 件**", blob)
         self.assertNotIn("****", blob)
