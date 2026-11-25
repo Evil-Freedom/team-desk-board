@@ -273,7 +273,7 @@ def _overdue_module(d):
     if not people:
         return {"tag": "column_set", "flex_mode": "none", "columns": [{
             "tag": "column", "width": "weighted", "weight": 1,
-            "background_style": "green-50", "padding": "8px 12px 8px 12px",
+            "background_style": "grey-50", "padding": "8px 12px 8px 12px",
             "elements": [{"tag": "markdown", "text_size": "notation",
                           "content": "<font color='grey'>逾期提醒　暂无逾期事项</font>"}],
         }]}
@@ -291,8 +291,9 @@ def _overdue_module(d):
                 {"tag": "column", "width": "weighted", "weight": 3, "vertical_align": "center",
                  "elements": [{"tag": "markdown", "content": chr(10).join([
                      "<font color='red'>**逾期提醒**</font>",
-                     # 标签深灰常规、姓名黑色加粗，与上方模块的姓名同等醒目
-                     f"<font color='grey'>负责人：</font>{names}{more}",
+                     # 「负责人：」也用主文字色：次要灰在暗色下几乎看不见，
+                     # 而这一行是告警模块里最需要被读到的信息
+                     f"负责人：{names}{more}",
                  ])}]},
                 {"tag": "column", "width": "weighted", "weight": 2, "vertical_align": "center",
                  "horizontal_align": "right",
@@ -314,19 +315,19 @@ def _modules(d):
         rows = [_cell_row(_esc(n, 20), f"<font color='grey'>{_esc(loc, 24) or '外出'}</font>",
                           weight_left=2, weight_right=3)
                 for n, loc in d["away_list"][:8]]
-        out.append(_module("出差人员", f"{d['away']} 人", "orange", rows, tint="orange-50"))
+        out.append(_module("出差人员", f"{d['away']} 人", "orange", rows))
 
     if d["leave_list"]:
         rows = [_cell_row(_esc(n, 20), f"<font color='grey'>{_esc(loc, 24) or '请假'}</font>",
                           right_auto=True)
                 for n, loc in d["leave_list"][:8]]
-        out.append(_module("请假人员", f"{d['leave']} 人", "green", rows, tint="green-50"))
+        out.append(_module("请假人员", f"{d['leave']} 人", "green", rows))
 
     if d["busy"]:
         total = sum(x[0] for x in d["busy"])
         rows = [_cell_row(_esc(name, 20), f"**{doing} 件**", right_auto=True)
                 for doing, _ov, name in d["busy"][:8]]
-        out.append(_module("在办事项", f"{total} 件", "blue", rows, tint="blue-50"))
+        out.append(_module("在办事项", f"{total} 件", "blue", rows))
 
     out.append(_overdue_module(d))
     return out
