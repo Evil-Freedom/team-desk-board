@@ -233,6 +233,35 @@ class Handler(SimpleHTTPRequestHandler):
 
         open_id = info.get("open_id") or info.get("sub")
         name = info.get("name") or info.get("en_name") or ""
+        if not open_id:
+            return self._html("<h3>读取用户信息失败</h3><p>返回里没有 open_id</p>", 400)
+
+        # 准入闸门：OAuth 成功 ≠ 有权看看板。
+        # 原来这里直接 save_token，等于任何飞书用户点一次登录就进了授权表；
+        # 现在要求「在运营部名单里」且「部门命中白名单」才落库。
+        allow = conf.get("allow_departments") or []
+        with db.session() as conn:
+            m = conn.execute("SELECT name, department FROM members WHERE open_id=?",
+                             (open_id,)).fetchone()
+        dept = (m["department"] or "").strip() if m else ""
+        if not allow:
+            db.log(False, "auth", f"OAuth 拒绝 {name}：未配置部门白名单")
+            return self._html(
+                "<h3>看板尚未配置访问范围</h3>"
+                "<p>服务端没有设置部门白名单，为安全起见拒绝所有访问。"
+                "请联系负责人补齐配置后重试。</p>", 403)
+        if not m:
+            db.log(False, "auth", f"OAuth 拒绝 {name}：不在成员名单")
+            return self._html(
+                "<h3>你不在运营部名单内</h3>"
+                "<p>这个看板只对运营部成员开放。如果你刚入职，"
+                "等名单同步（约 5 分钟）后再试。</p>", 403)
+        if dept not in allow:
+            db.log(False, "auth", f"OAuth 拒绝 {name}：部门 {dept or '未知'} 不在白名单")
+            return self._html(
+                f"<h3>无权访问</h3><p>你属于「{dept or '未知部门'}」，"
+                f"这个看板仅限「{'/'.join(allow)}」。</p>", 403)
+
         oauth.save_token(open_id, name, token)
 
         r = approvals_mod.sync_for_user(open_id, token["access_token"])
@@ -380,6 +409,53 @@ class Handler(SimpleHTTPRequestHandler):
     def _deny_page(self):
         self._redirect("/login")
 
+    def _deny(self, msg, code=403):
+        """拒绝访问。API 路径给 JSON，页面给可读 HTML。"""
+        if self.path.startswith("/api/"):
+            return self._json({"ok": False, "error": msg}, code)
+        return self._html(
+            f"<h3>无权访问</h3><p>{msg}</p>"
+            f"<p><a href='/login'>换一个账号登录</a></p>", code)
+
+    def _authorize(self):
+        """登录 + 部门双闸门。不通过时已经把响应写好了，调用方直接 return。
+
+        为什么必须 fail-closed：
+            原来的判断是 `if allow and dept and dept not in allow`——
+            三个条件任一为空就放行。表现是：配置丢了白名单、通讯录没同步到部门、
+            dept 为空时，**任何登录用户都能看整个部门的数据**。
+            这类「配置坏了反而更宽松」的默认值是最危险的一种。
+        """
+        ident = self._identity()
+        if not ident:
+            if self.path.startswith("/api/"):
+                self._json({"ok": False, "error": "未登录"}, 401)
+            else:
+                self._deny_page()
+            return None
+
+        allow = config.load().get("allow_departments") or []
+        if not allow:
+            db.log(False, "auth", f"拒绝 {ident['name']}：服务端未配置部门白名单")
+            self._deny("服务端未配置部门白名单，已拒绝访问")
+            return None
+
+        dept = (ident.get("dept") or "").strip()
+        if not dept:
+            # 通讯录没同步到这个人（或权限不足）时不能猜，只能拒
+            db.log(False, "auth", f"拒绝 {ident['name']}：无法核实部门")
+            self._deny("无法核实你的所属部门，已拒绝访问")
+            return None
+        if dept not in allow:
+            db.log(False, "auth", f"拒绝 {ident['name']}：部门 {dept} 不在白名单")
+            self._deny(f"你不是「{'/'.join(allow)}」成员，无权访问")
+            return None
+        return ident
+
+    def _is_admin(self, ident):
+        """管理员只看 config.todo_admins 名单，与「是不是部门成员」无关。"""
+        return bool(ident) and ident.get("name") in self._todo_admins()
+
     def _uid(self):
         raw = self.headers.get("Cookie") or ""
         for part in raw.split(";"):
@@ -406,23 +482,20 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
+        ident = None
         if path not in self.OPEN_PATHS:
-            ident = self._identity()
-            if not ident:
-                if path.startswith("/api/"):
-                    return self._json({"ok": False, "error": "未登录"}, 401)
-                return self._deny_page()
-
-            allow = config.load().get("allow_departments") or []
-            if allow and ident["dept"] and ident["dept"] not in allow:
-                return self._json(
-                    {"ok": False, "error": f"你不是{'/'.join(allow)}成员，无权访问"}, 403)
+            ident = self._authorize()
+            if ident is None:
+                return
 
         if path == "/api/board":
-            return self._json(board_payload(self._identity()))
+            return self._json(board_payload(ident))
         if path == "/internal/attendance/self":
             return self._internal_self()
         if path == "/api/absences":
+            # 含全部门的请假类型与出差城市，属于管理视角数据
+            if not self._is_admin(ident):
+                return self._deny("仅负责人可查看不在岗明细")
             return self._json(absences_payload())
         if path == "/api/health":
             return self._json(health_payload())
@@ -441,6 +514,10 @@ class Handler(SimpleHTTPRequestHandler):
             open_id = (q.get("open_id") or [""])[0]
             if not open_id:
                 return self._json({"ok": False, "error": "缺少 open_id"}, 400)
+            # 原来这里没有权限判断：任何登录成员都能列出别人的全部待办标题。
+            # 待办是工作内容，属于个人信息，按「本人或负责人」收口。
+            if not self._can_edit(ident, open_id):
+                return self._deny("只能查看自己的待办；需要代查请找负责人")
             return self._json({"ok": True, "items": tasks_mod.list_by_person(open_id)})
 
         if path == "/api/me":
@@ -456,9 +533,13 @@ class Handler(SimpleHTTPRequestHandler):
                                "is_admin": row["name"] in self._todo_admins()})
 
         if path == "/api/users":
+            if not self._is_admin(ident):
+                return self._deny("仅负责人可查看授权清单")
             return self._json({"items": oauth.list_users()})
 
         if path == "/api/config":
+            if not self._is_admin(ident):
+                return self._deny("仅负责人可查看配置")
             c = config.load()
             c["app_secret"] = "***" if c.get("app_secret") else ""
             return self._json(c)
@@ -536,11 +617,17 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/internal/morning/plan":
             return self._internal_plan()
 
-        if path not in self.OPEN_PATHS and not self._identity():
-            return self._json({"ok": False, "error": "未登录"}, 401)
+        ident = None
+        if path not in self.OPEN_PATHS:
+            # 写操作同样要过部门闸门：原来只校验「登录」，等于任何飞书用户都能写
+            ident = self._authorize()
+            if ident is None:
+                return
         body = self._read_body()
 
         if path == "/api/sync":
+            if not self._is_admin(ident):
+                return self._deny("仅负责人可手动触发同步")
             try:
                 return self._json(sync_all())
             except Exception as e:
@@ -564,7 +651,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(notify.announce_url(url, lines))
 
         if path in ("/api/todos", "/api/todos/toggle", "/api/todos/delete"):
-            me = self._identity()
+            me = ident
             # 注意：这里只能构造数据，不能调 self._json——
             # _json 会立即写响应头并结束请求，写成 deny = self._json(...)
             # 会让整段路由一律返回 403，连合法请求也进不去。
@@ -601,6 +688,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"ok": tasks_mod.remove(tid)})
 
         if path == "/api/config":
+            if not self._is_admin(ident):
+                return self._deny("仅负责人可修改配置")
             conf = config.save(body)
             conf["app_secret"] = "***" if conf.get("app_secret") else ""
             return self._json({"ok": True, "config": conf})
