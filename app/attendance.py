@@ -201,7 +201,7 @@ def _log(ok, scope, message, run_id=None):
 
 
 # ------------------------------------------------------------------ 采集
-def _collect_per_user(day):
+def _collect_per_user(day, exclude=None):
     """逐人授权采集：每人用自己的 token 查自己。
 
     为什么这条路径重要：
@@ -216,6 +216,7 @@ def _collect_per_user(day):
     if not app_id or not secret:
         return [], ["缺少应用凭证，无法刷新成员 token"], 0
 
+    exclude = exclude or set()
     rows, errors, tried = [], [], 0
     for u in oauth.list_users():
         token, err = oauth.get_valid_token(u["open_id"], app_id, secret)
@@ -230,6 +231,8 @@ def _collect_per_user(day):
             errors.append(f"{u.get('name') or u['open_id'][:8]}: {e}")
             continue
         for r in parse_user_tasks(data):
+            if r["employee_no"] in exclude:
+                continue
             r["open_id"] = u["open_id"]
             save_identity(u["open_id"], r["employee_no"], "user")
             rows.append(r)
@@ -237,32 +240,50 @@ def _collect_per_user(day):
 
 
 def sync(day=None, run_id=None, now=None):
-    """采集指定业务日期的考勤。mode 必须如实反映用的是哪条路径。"""
+    """采集指定业务日期的考勤。mode 如实反映本次用了哪几条路径。
+
+    为什么两种方式要并存而不是二选一：
+        有工号映射时走应用身份最省调用，但映射往往只覆盖已经授权过的人；
+        而「已授权但还没建立映射」的成员，只有用他自己的 token 才查得到。
+        以前这里用 if/else 二选一，结果是「有了第一条映射之后，
+        剩下的人永远补不进来」，覆盖率卡在 1 个人。
+    """
     day = day or today(now)
     mapping = identity_map()
+    rows, errors, tried, modes = [], [], 0, []
 
     if mapping:
         nos = sorted({v for v in mapping.values() if v})
         data, err = feishu.attendance_by_app(nos, day)
         if err:
-            _log(False, "attendance", f"team 取数失败：{err}", run_id)
-            return {"ok": False, "mode": "team", "error": err, "count": 0,
-                    "status": "failed", "errors": [err]}
-        rows = parse_user_tasks(data)
-        rev = {}
-        for o, no in mapping.items():
-            rev.setdefault(no, o)
-        for r in rows:
-            r["open_id"] = rev.get(r["employee_no"])
-        mode, errors, tried = "team", [], len(nos)
-    else:
-        rows, errors, tried = _collect_per_user(day)
-        mode = "per_user"
-        if tried == 0:
-            msg = errors[0] if errors else "没有已授权成员"
-            _log(False, "attendance", f"per_user 取数失败：{msg}", run_id)
-            return {"ok": False, "mode": mode, "error": msg, "count": 0,
-                    "status": "failed", "errors": errors}
+            # 应用身份失败不该让整轮采集失败：还有逐人授权这条路
+            errors.append(f"team: {err}")
+            _log(False, "attendance", f"team 取数失败，转逐人：{err}", run_id)
+        else:
+            team_rows = parse_user_tasks(data)
+            rev = {}
+            for o, no in mapping.items():
+                rev.setdefault(no, o)
+            for r in team_rows:
+                r["open_id"] = rev.get(r["employee_no"])
+            rows += team_rows
+            tried += len(nos)
+            modes.append("team")
+
+    got = {r["employee_no"] for r in rows}
+    extra, errs, t = _collect_per_user(day, exclude=got)
+    rows += extra
+    errors += errs
+    tried += t
+    if t:
+        modes.append("per_user")
+
+    mode = "+".join(modes) if modes else "none"
+    if not modes:
+        msg = errors[0] if errors else "没有可用的授权成员"
+        _log(False, "attendance", f"取数失败：{msg}", run_id)
+        return {"ok": False, "mode": mode, "error": msg, "count": 0,
+                "status": "failed", "errors": errors}
 
     with db.session() as conn:
         existing = {r["employee_no"] for r in conn.execute(
