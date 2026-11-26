@@ -97,11 +97,7 @@ def board_payload(viewer=None):
             "lead": m["name"] == lead_name,
             "species": species.get(m["name"], "ape"),
             "synced": True,
-            # 向后兼容：老前端不认识这个键会忽略，新前端才渲染考勤行
-            "attendance": {
-                "state": st,
-                "text": attendance_mod.STATUS_TEXT.get(st, ""),
-            },
+
         })
 
     c_log = db.last_log("contacts") or {}
@@ -118,18 +114,6 @@ def board_payload(viewer=None):
             "ok": bool(a_log.get("ok")),
             "message": a_log.get("message") or "尚未同步",
             "configured": bool(conf.get("approvals")),
-        },
-        "attendance": {
-            "date": att_day,
-            "scope": attendance_mod.current_mode(att_rows),
-            "scoped": len(att_rows),
-            "total": len(members),
-            "full": len(att_rows) >= len(members),
-            "synced": bool(att_log.get("ok")),
-            "message": att_log.get("message") or "尚未采集",
-            "ts": att_log.get("ts"),
-            "checked": sum(1 for x in members
-                           if x["attendance"]["state"] == attendance_mod.CHECKED_IN),
         },
     }
 

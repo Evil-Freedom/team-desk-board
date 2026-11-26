@@ -861,7 +861,7 @@ function attLine(m){
   const a = m.attendance;
   if (!a || !a.state) return '';
   const text = a.text || ATT_TEXT[a.state] || '';
-  return `<div class="att" data-state="${a.state}">考勤：<span>${text}</span></div>`;
+  return '';
 }
 
 const ATT_TEXT = {
@@ -1378,7 +1378,6 @@ function mergeWithLocal(remote){
       species: r.species || m.species,
       // 考勤字段必须跟着合并走：白名单式重建会把它丢掉，
       // 表现为「明明采到了记录，卡片上却不显示」
-      attendance: r.attendance,
       synced: true
     };
   });
