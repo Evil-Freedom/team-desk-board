@@ -41,7 +41,7 @@
   .head-side{min-width:220px}
 
   /* 负责人这一层：单独一张卡，居中挂在部门下面 */
-  .lead-row{display:flex;justify-content:center;margin-top:64px}
+  .lead-row{display:flex;justify-content:center;margin-top:18px}
   .lead-row .member{width:195px;max-width:none;flex:none;animation:none}
 
   .title{font-size:17px;font-weight:650;letter-spacing:-.2px;margin:0 0 6px}
@@ -976,18 +976,12 @@ function drawLinks(){
   const rootCx = root.offsetLeft + root.offsetWidth / 2;
   const rootBottom = root.offsetTop + root.offsetHeight;
 
-  // 部门 → 负责人
+  // 部门 → 负责人：不画线。
+  // 负责人（张婕）就是部门的老大，从「运营部」拉一根线下来会把他变成
+  // 部门的下级节点，读起来像"运营部下面挂着张婕"。
+  // 连线的起点改为负责人本人，只用来串起后面的成员。
   let prevX = lead ? lead.offsetLeft + lead.offsetWidth / 2 : rootCx;
   let prevY = lead ? lead.offsetTop + lead.offsetHeight : rootBottom;
-
-  if (lead){
-    if (Math.abs(rootCx - prevX) < 1){
-      segs.push(`M${rootCx},${rootBottom} V${prevY}`);
-    } else {
-      const midY = (rootBottom + prevY) / 2;
-      segs.push(`M${rootCx},${rootBottom} V${midY} H${prevX} V${prevY}`);
-    }
-  }
 
   // 负责人 → 各行成员
 
