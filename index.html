@@ -985,7 +985,7 @@ function drawLinks(){
 
   // 负责人 → 各行成员
 
-  rows.forEach(row => {
+  rows.forEach((row, ri) => {
     const cards = [...row.children];
     if (!cards.length) return;
 
@@ -1000,7 +1000,8 @@ function drawLinks(){
     const x1 = Math.min(...xs, prevX);
     const x2 = Math.max(...xs, prevX);
 
-    segs.push(`M${prevX},${prevY} V${busY}`);
+    // 没有负责人时也不从「运营部」往下拉线：部门标题后面不该挂任何竖线
+    if (lead || ri > 0) segs.push(`M${prevX},${prevY} V${busY}`);
     if (x2 - x1 > 1) segs.push(`M${x1},${busY} H${x2}`);
     pts.forEach(p => segs.push(`M${p.x},${busY} V${p.y}`));
 
