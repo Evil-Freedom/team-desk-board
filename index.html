@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>示例部门 · 状态树</title>
+<title>状态树</title>
 <style>
   :root{
     --bg:#f5f7fa;
@@ -423,12 +423,9 @@
 <main class="board">
   <header class="topbar" id="topbar">
     <div class="head-side">
-      <h1 class="title">示例部门 · 状态树</h1>
-      <div class="crumb">
-        <span>示例公司</span><i>›</i>
-        <span>业务中心</span><i>›</i>
-        <span>职能组</span><i>›</i>
-        <span class="cur">示例部门</span>
+      <h1 class="title" id="pageTitle">状态树</h1>
+      <div class="crumb" id="crumb">
+        <span class="cur" id="crumbDept">—</span>
       </div>
       <div class="upd" id="upd">更新于 —</div>
     </div>
@@ -439,7 +436,7 @@
     <svg class="links" id="links"></svg>
 
     <div class="root-node" id="rootNode">
-      <span class="root-name">示例部门</span>
+      <span class="root-name" id="rootName">—</span>
       <span class="root-meta" id="rootMeta">—</span>
     </div>
 
@@ -1030,6 +1027,18 @@ function renderStats(list){
 }
 
 function render(list, source){
+  // 部门名来自服务端配置（config.department），页面不再写死「示例部门」。
+  // 面包屑原来的「示例公司 › 业务中心 › 职能组」三层是虚构的，
+  // 飞书通讯录里没有对应真实数据，所以整段去掉，只留部门。
+  const deptName = (source === 'demo') ? '示例部门' : DEPT_NAME;
+  const tEl = document.getElementById('pageTitle');
+  if (tEl) tEl.textContent = deptName + ' · 状态树';
+  document.title = deptName + ' · 状态树';
+  const cEl = document.getElementById('crumbDept');
+  if (cEl) cEl.textContent = deptName;
+  const rEl = document.getElementById('rootName');
+  if (rEl) rEl.textContent = deptName;
+
   const lead = list.find(m => m.lead);
   const rest = lead ? list.filter(m => m !== lead) : list;
 
@@ -1325,9 +1334,12 @@ function applyBoard(list, source){
   requestAnimationFrame(() => requestAnimationFrame(drawLinks));
 }
 
+let DEPT_NAME = '运营部';   // 真实值由 /api/board 的 department 覆盖
+
 async function refreshBoard(){
   const remote = await fetchBoard();
   if (!remote) return;
+  if (remote.department) DEPT_NAME = remote.department;
   applyBoard(mergeWithLocal(remote.members), 'feishu');
 }
 

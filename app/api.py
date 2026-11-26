@@ -581,7 +581,16 @@ class Handler(SimpleHTTPRequestHandler):
             path = "/index.html"
         if not self._static_allowed(path):
             return self._json({"ok": False, "error": "not found"}, 404)
+        # HTML 不缓存：改版后手机上如果还拿旧页面，会一直看到上一版界面
+        if path.endswith(".html"):
+            self._no_cache = True
         return super().do_GET()
+
+    def end_headers(self):
+        if getattr(self, "_no_cache", False):
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+        super().end_headers()
 
     def _internal_plan(self):
         """QuickLaunch 上报「今天第一个待核验任务」，用来登记晨间统采。
