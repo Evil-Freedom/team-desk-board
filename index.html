@@ -860,9 +860,8 @@ function attLine(m){
      精确打卡时间只有负责人能拿到（后端已按角色过滤），这里不做任何推断。 */
   const a = m.attendance;
   if (!a || !a.state) return '';
-  const hm = a.check_in_hm ? `<span>${a.check_in_hm}</span>` : '';
   const text = a.text || ATT_TEXT[a.state] || '';
-  return `<div class="att" data-state="${a.state}">考勤：<span>${text}</span>${hm ? ' · ' + hm : ''}</div>`;
+  return `<div class="att" data-state="${a.state}">考勤：<span>${text}</span></div>`;
 }
 
 const ATT_TEXT = {

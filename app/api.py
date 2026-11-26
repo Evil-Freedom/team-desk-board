@@ -81,10 +81,10 @@ def board_payload(viewer=None):
             # 不在采集范围（应用缺工号权限）：如实标未知，不能显示成「待打卡」
             st = attendance_mod.CHECKIN_UNKNOWN
 
-        # 精确打卡时间只给负责人：普通成员看到的是「已打卡/待打卡」这种状态词，
-        # 拿不到别人几点几分到的公司。
-        precise = st == attendance_mod.CHECKED_IN and rec and is_admin
-        ct = rec.get("check_in_time") if rec else None
+        # 打卡时间不下发——连负责人也不给。
+        # 看板只需要「已打卡/待打卡」这个结论；几点几分到的公司是个人隐私，
+        # 负责人看自己的时间可以进飞书考勤应用查，不该在部门看板上被所有人看到。
+        # 原始数据仍在 attendance_records 表与 /internal/attendance/self（本人核验）。
         members.append({
             "open_id": oid,
             "name": m["name"],
@@ -101,9 +101,6 @@ def board_payload(viewer=None):
             "attendance": {
                 "state": st,
                 "text": attendance_mod.STATUS_TEXT.get(st, ""),
-                "check_in_time": ct if precise else None,
-                "check_in_hm": (time.strftime("%H:%M", time.localtime(ct))
-                                if precise and ct else None),
             },
         })
 
