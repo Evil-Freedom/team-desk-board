@@ -23,6 +23,7 @@
   html,body{margin:0;padding:0}
   body{
     background:var(--bg);
+    -webkit-tap-highlight-color: transparent;
     color:var(--ink);
     font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
     -webkit-font-smoothing:antialiased;
@@ -69,6 +70,12 @@
     position:relative;z-index:1;
     width:auto;margin:0 auto;text-align:center;
     padding:2px 0 6px;
+    /* 块级元素撑满整行，手指点上去浏览器会刷一层整行灰底，
+       看着像凭空多出一个方框 */
+    background:transparent;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    user-select: none;
   }
   .root-name{display:block;font-size:13px;font-weight:600;color:var(--ink-2);letter-spacing:.4px}
   .root-meta{display:block;margin-top:2px;font-size:11px;color:var(--ink-3)}
