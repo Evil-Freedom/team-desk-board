@@ -976,12 +976,19 @@ function drawLinks(){
   const rootCx = root.offsetLeft + root.offsetWidth / 2;
   const rootBottom = root.offsetTop + root.offsetHeight;
 
-  // 部门 → 负责人：不画线。
-  // 负责人（张婕）就是部门的老大，从「运营部」拉一根线下来会把他变成
-  // 部门的下级节点，读起来像"运营部下面挂着张婕"。
-  // 连线的起点改为负责人本人，只用来串起后面的成员。
+  // 部门 → 负责人：正常连线，从「运营部 / 11 人 · 负责人」文字块的
+  // **底部**出发，连到负责人卡片顶部。上方的标题区域不能有任何线。
   let prevX = lead ? lead.offsetLeft + lead.offsetWidth / 2 : rootCx;
   let prevY = lead ? lead.offsetTop + lead.offsetHeight : rootBottom;
+
+  if (lead){
+    if (Math.abs(rootCx - prevX) < 1){
+      segs.push(`M${rootCx},${rootBottom} V${prevY}`);
+    } else {
+      const midY = (rootBottom + prevY) / 2;
+      segs.push(`M${rootCx},${rootBottom} V${midY} H${prevX} V${prevY}`);
+    }
+  }
 
   // 负责人 → 各行成员
 
